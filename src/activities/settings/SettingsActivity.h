@@ -22,6 +22,7 @@ enum class SettingAction {
   CheckForUpdates,
   SdFirmwareUpdate,
   Language,
+  EfuseInspector,
 };
 
 struct SettingInfo {
