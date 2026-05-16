@@ -13,6 +13,8 @@
 #include <Logging.h>
 #include <SPI.h>
 #include <builtinFonts/all.h>
+#include <esp_bootloader_desc.h>
+#include <esp_ota_ops.h>
 
 #include <cstring>
 
@@ -285,6 +287,18 @@ void setup() {
 #endif
 
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
+
+  // crossboot leaves date_time empty; a stock pio-built bootloader fills it.
+  // Post-flash sanity check for the SD bootloader update path.
+  {
+    esp_bootloader_desc_t bldesc;
+    if (esp_ota_get_bootloader_description(nullptr, &bldesc) == ESP_OK) {
+      LOG_INF("MAIN", "Bootloader: idf=\"%.32s\" date=\"%.24s\" version=%u", bldesc.idf_ver, bldesc.date_time,
+              static_cast<unsigned>(bldesc.version));
+    } else {
+      LOG_ERR("MAIN", "esp_ota_get_bootloader_description failed");
+    }
+  }
 
   // SD Card Initialization
   // We need 6 open files concurrently when parsing a new chapter
