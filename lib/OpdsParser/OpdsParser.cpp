@@ -1,5 +1,6 @@
 #include "OpdsParser.h"
 
+#include <Arduino.h>
 #include <Logging.h>
 #include <XmlParserUtils.h>
 
@@ -32,7 +33,8 @@ size_t OpdsParser::write(const uint8_t* xmlData, const size_t length) {
     void* const buf = XML_GetBuffer(parser, chunkSize);
     if (!buf) {
       errorOccured = true;
-      LOG_DBG("OPDS", "Couldn't allocate memory for buffer");
+      LOG_ERR("OPDS", "Expat buffer alloc failed: entries=%u Free=%u MaxAlloc=%u", static_cast<unsigned>(entries.size()),
+              ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       destroyXmlParser(parser);
       return length;
     }
@@ -42,8 +44,9 @@ size_t OpdsParser::write(const uint8_t* xmlData, const size_t length) {
 
     if (XML_ParseBuffer(parser, static_cast<int>(toRead), 0) == XML_STATUS_ERROR) {
       errorOccured = true;
-      LOG_DBG("OPDS", "Parse error at line %lu: %s", XML_GetCurrentLineNumber(parser),
-              XML_ErrorString(XML_GetErrorCode(parser)));
+      LOG_ERR("OPDS", "Parse error at line %lu: %s (entries=%u Free=%u MaxAlloc=%u)",
+              XML_GetCurrentLineNumber(parser), XML_ErrorString(XML_GetErrorCode(parser)),
+              static_cast<unsigned>(entries.size()), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       destroyXmlParser(parser);
       return length;
     }

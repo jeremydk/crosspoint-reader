@@ -12,6 +12,7 @@
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <SPI.h>
 #include <builtinFonts/all.h>
 
@@ -36,41 +37,60 @@ namespace {
 // heap_caps_dump prints via bare printf which on this build goes to UART0,
 // not USB CDC. Walk the heap manually and route through LOG_INF so the dump
 // reaches the captured trace. Header typo is real: walker_heap_into_t.
-constexpr int HEAP_WALK_BLOCKS_PER_LINE = 8;
+//
+// IMPORTANT: heap_caps_walk does NOT hold the heap mutex across callbacks.
+// Yielding inside the callback (vTaskDelay or any I/O that drains the USB
+// CDC) lets another task malloc/free, which invalidates the walker's
+// internal iterator and silently truncates the dump (we hit this — only the
+// first 4 of ~380 blocks landed). So the walker just writes into a
+// pre-allocated buffer and we emit the result AFTER the walk returns.
+constexpr size_t HEAP_DUMP_BUF_SIZE = 8192;
 
-struct HeapWalkState {
-  char buf[256];
-  int len;
-  int count;
+struct HeapDumpBuffer {
+  char* data;
+  size_t cap;
+  size_t len;
+  bool overflowed;
 };
 
 bool heapDumpWalker(walker_heap_into_t, walker_block_info_t block, void* user_data) {
-  auto* state = static_cast<HeapWalkState*>(user_data);
-  const int remaining = static_cast<int>(sizeof(state->buf)) - state->len;
-  if (remaining > 0) {
-    const int added = snprintf(state->buf + state->len, remaining, "%c%08lx=%u ", block.used ? 'U' : 'F',
-                               reinterpret_cast<unsigned long>(block.ptr), static_cast<unsigned>(block.size));
-    if (added > 0) state->len += added;
+  auto* buf = static_cast<HeapDumpBuffer*>(user_data);
+  if (buf->len + 32 >= buf->cap) {
+    buf->overflowed = true;
+    return false;  // stop the walk; buffer is full
   }
-  state->count++;
-  if (state->count >= HEAP_WALK_BLOCKS_PER_LINE) {
-    LOG_INF("MEM", "  %s", state->buf);
-    state->len = 0;
-    state->count = 0;
-    // logSerial.flush() blocks until the USB CDC TX buffer drains, which fixes
-    // both the dropped-bytes-on-overrun and the interleaving with concurrent
-    // render-task prints. 10ms vTaskDelay is at least one tick at 100Hz so it
-    // actually yields (pdMS_TO_TICKS(2) rounds to 0 ticks = no delay).
-    logSerial.flush();
-    vTaskDelay(pdMS_TO_TICKS(10));
-  }
+  const int n = snprintf(buf->data + buf->len, buf->cap - buf->len, "%c%08lx=%u ", block.used ? 'U' : 'F',
+                         reinterpret_cast<unsigned long>(block.ptr), static_cast<unsigned>(block.size));
+  if (n > 0) buf->len += static_cast<size_t>(n);
   return true;
 }
 
 void heapDumpToLog() {
-  HeapWalkState state{};
-  heap_caps_walk(MALLOC_CAP_DEFAULT, heapDumpWalker, &state);
-  if (state.count > 0) LOG_INF("MEM", "  %s", state.buf);
+  auto storage = makeUniqueNoThrow<char[]>(HEAP_DUMP_BUF_SIZE);
+  if (!storage) {
+    LOG_ERR("MEM", "heap dump: OOM allocating %u-byte scratch", static_cast<unsigned>(HEAP_DUMP_BUF_SIZE));
+    return;
+  }
+  HeapDumpBuffer buf{storage.get(), HEAP_DUMP_BUF_SIZE, 0, false};
+  heap_caps_walk(MALLOC_CAP_DEFAULT, heapDumpWalker, &buf);
+  if (buf.overflowed) {
+    LOG_INF("MEM", "heap dump: buffer full at %u bytes — increase HEAP_DUMP_BUF_SIZE", static_cast<unsigned>(buf.len));
+  }
+  // Emit ~160 chars per LOG line (well under USB CDC TX FIFO), align to
+  // entry boundaries (spaces), flush + yield between lines.
+  constexpr size_t LINE_CHARS = 160;
+  size_t pos = 0;
+  while (pos < buf.len) {
+    size_t end = pos + LINE_CHARS < buf.len ? pos + LINE_CHARS : buf.len;
+    if (end < buf.len) {
+      while (end > pos && buf.data[end - 1] != ' ') --end;
+      if (end == pos) end = pos + LINE_CHARS;  // no space found, hard cut
+    }
+    LOG_INF("MEM", "  %.*s", static_cast<int>(end - pos), buf.data + pos);
+    pos = end;
+    logSerial.flush();
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
 }
 
 // Power-of-2 size buckets: 16, 32, 64, ..., up to 64k+. Bucket index of a

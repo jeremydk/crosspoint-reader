@@ -194,11 +194,22 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   }
 
   std::string url = (path.find("http") == 0) ? path : UrlUtils::buildUrl(server.url, path);
-  LOG_DBG("OPDS", "Fetching: %s", url.c_str());
+  LOG_INF("OPDS", "Fetching: %s (heap before: Free=%u MaxAlloc=%u)", url.c_str(), ESP.getFreeHeap(),
+          ESP.getMaxAllocHeap());
+
+  // Stream the body straight into the parser via fetchUrlVerbose. The
+  // diagnostic fetcher has wall-clock deadlines (not HTTPClient's per-read
+  // truncated uint16 timeout), so a slow parser draining the socket no
+  // longer trips a read deadline. And streaming keeps peak memory tiny
+  // (~chunk-sized) rather than a single contiguous body buffer that abort()s
+  // when std::string can't double its capacity past MaxAlloc.
   OpdsParser parser;
   {
+    // OpdsParserStream's destructor calls parser.flush() — don't call it ourselves
+    // here or we double-flush and expat errors with XML_ERROR_FINISHED.
     OpdsParserStream stream{parser};
-    if (!HttpDownloader::fetchUrl(url, stream, server.username, server.password)) {
+    if (!HttpDownloader::fetchUrlVerbose(url, stream, server.username, server.password)) {
+      LOG_ERR("OPDS", "fetch transport failed (heap: Free=%u MaxAlloc=%u)", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       state = BrowserState::ERROR;
       errorMessage = tr(STR_FETCH_FEED_FAILED);
       requestUpdate();
@@ -207,11 +218,15 @@ void OpdsBookBrowserActivity::fetchFeed(const std::string& path) {
   }
 
   if (!parser) {
+    LOG_ERR("OPDS", "parser flagged error after fetch (heap: Free=%u MaxAlloc=%u)", ESP.getFreeHeap(),
+            ESP.getMaxAllocHeap());
     state = BrowserState::ERROR;
     errorMessage = tr(STR_PARSE_FEED_FAILED);
     requestUpdate();
     return;
   }
+  LOG_INF("OPDS", "parse ok: %u entries (heap after: Free=%u MaxAlloc=%u)",
+          static_cast<unsigned>(parser.getEntries().size()), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
   searchTemplate = parser.getSearchTemplate();
   const auto& nextUrl = parser.getNextPageUrl();
