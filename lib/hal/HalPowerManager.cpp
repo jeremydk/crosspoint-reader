@@ -10,6 +10,8 @@
 
 HalPowerManager powerManager;  // Singleton instance
 
+static StaticSemaphore_t s_modeMutexBuffer;
+
 void HalPowerManager::begin() {
   if (gpio.deviceIsX3()) {
     // X3 uses an I2C fuel gauge for battery monitoring.
@@ -21,7 +23,7 @@ void HalPowerManager::begin() {
     pinMode(BAT_GPIO0, INPUT);
   }
   normalFreq = getCpuFrequencyMhz();
-  modeMutex = xSemaphoreCreateMutex();
+  modeMutex = xSemaphoreCreateMutexStatic(&s_modeMutexBuffer);
   assert(modeMutex != nullptr);
 }
 

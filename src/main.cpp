@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Epub.h>
+#include <esp_heap_caps.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
 #include <GfxRenderer.h>
@@ -30,6 +31,99 @@
 #include "fontIds.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
+
+namespace {
+// heap_caps_dump prints via bare printf which on this build goes to UART0,
+// not USB CDC. Walk the heap manually and route through LOG_INF so the dump
+// reaches the captured trace. Header typo is real: walker_heap_into_t.
+constexpr int HEAP_WALK_BLOCKS_PER_LINE = 8;
+
+struct HeapWalkState {
+  char buf[256];
+  int len;
+  int count;
+};
+
+bool heapDumpWalker(walker_heap_into_t, walker_block_info_t block, void* user_data) {
+  auto* state = static_cast<HeapWalkState*>(user_data);
+  const int remaining = static_cast<int>(sizeof(state->buf)) - state->len;
+  if (remaining > 0) {
+    const int added = snprintf(state->buf + state->len, remaining, "%c%08lx=%u ", block.used ? 'U' : 'F',
+                               reinterpret_cast<unsigned long>(block.ptr), static_cast<unsigned>(block.size));
+    if (added > 0) state->len += added;
+  }
+  state->count++;
+  if (state->count >= HEAP_WALK_BLOCKS_PER_LINE) {
+    LOG_INF("MEM", "  %s", state->buf);
+    state->len = 0;
+    state->count = 0;
+    // logSerial.flush() blocks until the USB CDC TX buffer drains, which fixes
+    // both the dropped-bytes-on-overrun and the interleaving with concurrent
+    // render-task prints. 10ms vTaskDelay is at least one tick at 100Hz so it
+    // actually yields (pdMS_TO_TICKS(2) rounds to 0 ticks = no delay).
+    logSerial.flush();
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  return true;
+}
+
+void heapDumpToLog() {
+  HeapWalkState state{};
+  heap_caps_walk(MALLOC_CAP_DEFAULT, heapDumpWalker, &state);
+  if (state.count > 0) LOG_INF("MEM", "  %s", state.buf);
+}
+
+// Power-of-2 size buckets: 16, 32, 64, ..., up to 64k+. Bucket index of a
+// block size s is floor(log2((s-1)/16))+1, clamped to 0..HIST_BUCKETS-1.
+// One snprintf per bucket line, single LOG_INF call — atomic relative to
+// other tasks' prints, which the per-block dump cannot guarantee.
+constexpr int HEAP_HIST_BUCKETS = 13;
+constexpr const char* HEAP_HIST_LABELS[HEAP_HIST_BUCKETS] = {
+    "16", "32", "64", "128", "256", "512", "1k", "2k", "4k", "8k", "16k", "32k", "64k+",
+};
+
+int heapBucketIndex(size_t size) {
+  if (size <= 16) return 0;
+  int b = 0;
+  size_t s = (size - 1) >> 4;
+  while (s) { s >>= 1; ++b; }
+  return b >= HEAP_HIST_BUCKETS ? HEAP_HIST_BUCKETS - 1 : b;
+}
+
+struct HeapHistStats {
+  uint32_t used[HEAP_HIST_BUCKETS];
+  uint32_t freeb[HEAP_HIST_BUCKETS];
+};
+
+bool heapHistWalker(walker_heap_into_t, walker_block_info_t block, void* user_data) {
+  auto* stats = static_cast<HeapHistStats*>(user_data);
+  const int b = heapBucketIndex(block.size);
+  if (block.used) ++stats->used[b];
+  else ++stats->freeb[b];
+  return true;
+}
+
+void heapHistogramToLog() {
+  HeapHistStats stats{};
+  heap_caps_walk(MALLOC_CAP_DEFAULT, heapHistWalker, &stats);
+  char ubuf[200];
+  int ulen = 0;
+  for (int i = 0; i < HEAP_HIST_BUCKETS; ++i) {
+    if (stats.used[i] == 0) continue;
+    ulen += snprintf(ubuf + ulen, sizeof(ubuf) - ulen, "%s:%u ", HEAP_HIST_LABELS[i],
+                     static_cast<unsigned>(stats.used[i]));
+  }
+  LOG_INF("MEM", "hist USED: %s", ubuf);
+  char fbuf[200];
+  int flen = 0;
+  for (int i = 0; i < HEAP_HIST_BUCKETS; ++i) {
+    if (stats.freeb[i] == 0) continue;
+    flen += snprintf(fbuf + flen, sizeof(fbuf) - flen, "%s:%u ", HEAP_HIST_LABELS[i],
+                     static_cast<unsigned>(stats.freeb[i]));
+  }
+  LOG_INF("MEM", "hist FREE: %s", fbuf);
+}
+}  // namespace
 
 MappedInputManager mappedInputManager(gpio);
 GfxRenderer renderer(display);
@@ -138,20 +232,28 @@ constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 
+// Silent restart suppressed during allocator-fragmentation troubleshooting.
+// We want to see what the heap looks like after the activities that would
+// normally trigger a restart, instead of losing the trace to a reboot. Keep
+// these as loud LOG_INF so it's obvious when the restart was wanted.
 void silentRestart() {
-  silentRebootTarget = SILENT_REBOOT_TARGET_HOME;
-  silentRebootMagic = SILENT_REBOOT_MAGIC;
-  LOG_DBG("MAIN", "Silent restart (target=home)");
-  delay(50);
-  ESP.restart();
+  LOG_INF("MAIN", "[suppressed] silentRestart(target=home) — restart skipped, see allocator trace");
+  multi_heap_info_t info;
+  heap_caps_get_info(&info, MALLOC_CAP_DEFAULT);
+  LOG_INF("MEM", "At suppressed restart: Free=%u MaxAlloc=%u FreeBlocks=%u AllocBlocks=%u",
+          static_cast<unsigned>(info.total_free_bytes), static_cast<unsigned>(info.largest_free_block),
+          static_cast<unsigned>(info.free_blocks), static_cast<unsigned>(info.allocated_blocks));
+  heapHistogramToLog();
 }
 
 void silentRestartToReader() {
-  silentRebootTarget = SILENT_REBOOT_TARGET_READER;
-  silentRebootMagic = SILENT_REBOOT_MAGIC;
-  LOG_DBG("MAIN", "Silent restart (target=reader)");
-  delay(50);
-  ESP.restart();
+  LOG_INF("MAIN", "[suppressed] silentRestartToReader — restart skipped, see allocator trace");
+  multi_heap_info_t info;
+  heap_caps_get_info(&info, MALLOC_CAP_DEFAULT);
+  LOG_INF("MEM", "At suppressed restart: Free=%u MaxAlloc=%u FreeBlocks=%u AllocBlocks=%u",
+          static_cast<unsigned>(info.total_free_bytes), static_cast<unsigned>(info.largest_free_block),
+          static_cast<unsigned>(info.free_blocks), static_cast<unsigned>(info.allocated_blocks));
+  heapHistogramToLog();
 }
 
 // Verify power button press duration on wake-up from deep sleep
@@ -286,6 +388,11 @@ void setup() {
 
   LOG_INF("MAIN", "Hardware detect: %s", gpio.deviceIsX3() ? "X3" : "X4");
 
+  // Heap baseline as early as USB CDC is reliably attached. Pairs with the
+  // end-of-setup log to show how much DRAM the boot path consumes.
+  LOG_INF("MEM", "Boot heap: Free=%d MinFree=%d MaxAlloc=%d", ESP.getFreeHeap(), ESP.getMinFreeHeap(),
+          ESP.getMaxAllocHeap());
+
   // SD Card Initialization
   // We need 6 open files concurrently when parsing a new chapter
   if (!Storage.begin()) {
@@ -386,6 +493,20 @@ void setup() {
 
   // Ensure we're not still holding the power button before leaving setup
   waitForPowerRelease();
+
+  // Heap after setup completes: SD mount, settings, fonts, display, first activity onEnter.
+  // Compared with the boot-time log this shows the "fixed cost" the runtime starts from.
+  // MaxAlloc is the largest contiguous block — the canonical fragmentation indicator.
+  LOG_INF("MEM", "Setup done heap: Free=%d MinFree=%d MaxAlloc=%d", ESP.getFreeHeap(), ESP.getMinFreeHeap(),
+          ESP.getMaxAllocHeap());
+
+  // Baseline post-boot heap layout. Pair with CMD:HEAPDUMP later to diff and
+  // see which holes accumulated. Histogram is the always-on summary; the full
+  // dump is the on-demand detail.
+  heapHistogramToLog();
+  LOG_INF("MEM", "Baseline heap dump follows:");
+  heapDumpToLog();
+  LOG_INF("MEM", "Baseline heap dump done");
 }
 
 void loop() {
@@ -399,8 +520,14 @@ void loop() {
   renderer.setFadingFix(SETTINGS.fadingFix);
 
   if (Serial && millis() - lastMemPrint >= 10000) {
-    LOG_INF("MEM", "Free: %d bytes, Total: %d bytes, Min Free: %d bytes, MaxAlloc: %d bytes", ESP.getFreeHeap(),
-            ESP.getHeapSize(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap());
+    // FreeBlocks rising over time is the canonical fragmentation signal: same total
+    // free bytes but split across more holes. AllocBlocks shows live allocation count.
+    multi_heap_info_t info;
+    heap_caps_get_info(&info, MALLOC_CAP_DEFAULT);
+    LOG_INF("MEM", "Free: %d Total: %d MinFree: %d MaxAlloc: %d FreeBlocks: %u AllocBlocks: %u", ESP.getFreeHeap(),
+            ESP.getHeapSize(), ESP.getMinFreeHeap(), ESP.getMaxAllocHeap(),
+            static_cast<unsigned>(info.free_blocks), static_cast<unsigned>(info.allocated_blocks));
+    heapHistogramToLog();
     lastMemPrint = millis();
   }
 
@@ -417,6 +544,15 @@ void loop() {
         uint8_t* buf = display.getFrameBuffer();
         logSerial.write(buf, bufferSize);
         logSerial.printf("SCREENSHOT_END\n");
+      } else if (cmd == "HEAPDUMP") {
+        // Full block-by-block walk via LOG_INF. Verbose but invaluable for
+        // diffing layout against the baseline. Histogram first as a summary
+        // that's always atomic in the log even if the dump gets interleaved.
+        logSerial.printf("HEAPDUMP_START\n");
+        heapHistogramToLog();
+        heapDumpToLog();
+        logSerial.flush();
+        logSerial.printf("HEAPDUMP_END\n");
       }
     }
   }

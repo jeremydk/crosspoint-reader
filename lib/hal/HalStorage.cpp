@@ -11,8 +11,12 @@
 
 HalStorage HalStorage::instance;
 
+// Static-allocated mutex storage: keeps the FreeRTOS mutex out of the heap
+// so it never contributes to fragmentation. Tier A of the allocator plan.
+static StaticSemaphore_t s_storageMutexBuffer;
+
 HalStorage::HalStorage() {
-  storageMutex = xSemaphoreCreateMutex();
+  storageMutex = xSemaphoreCreateMutexStatic(&s_storageMutexBuffer);
   assert(storageMutex != nullptr);
 }
 

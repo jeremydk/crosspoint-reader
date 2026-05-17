@@ -6,6 +6,8 @@
 #include <NetworkClientSecure.h>
 #include <StreamString.h>
 #include <base64.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include <cstring>
 #include <memory>
@@ -14,6 +16,48 @@
 #include "util/UrlUtils.h"
 
 namespace {
+// Shared HTTP client storage. Allocating NetworkClientSecure per-call was the
+// dominant fragmenter in trace runs (FreeBlocks 13 -> 37 across a single TLS
+// session). Keeping one instance alive trades a permanent ~object footprint
+// for no per-call alloc churn. Mutex serialises callers since mbedtls state
+// isn't safe to share concurrently.
+NetworkClient s_plainClient;
+NetworkClientSecure s_secureClient;
+StaticSemaphore_t s_clientMutexBuffer;
+SemaphoreHandle_t s_clientMutex = nullptr;
+
+// RAII lease over the shared client. Acquires the mutex on construction,
+// releases on destruction. Every return path through HttpDownloader is now
+// automatically cleaned up, no per-branch release call needed.
+class ClientLease {
+ public:
+  explicit ClientLease(bool secure) {
+    if (s_clientMutex == nullptr) {
+      s_clientMutex = xSemaphoreCreateMutexStatic(&s_clientMutexBuffer);
+    }
+    xSemaphoreTake(s_clientMutex, portMAX_DELAY);
+    if (secure) {
+      s_secureClient.stop();
+      s_secureClient.setInsecure();
+      client_ = &s_secureClient;
+    } else {
+      s_plainClient.stop();
+      client_ = &s_plainClient;
+    }
+  }
+  ~ClientLease() {
+    client_->stop();
+    xSemaphoreGive(s_clientMutex);
+  }
+  ClientLease(const ClientLease&) = delete;
+  ClientLease& operator=(const ClientLease&) = delete;
+
+  NetworkClient& get() { return *client_; }
+
+ private:
+  NetworkClient* client_;
+};
+
 class FileWriteStream final : public Stream {
  public:
   FileWriteStream(FsFile& file, size_t total, HttpDownloader::ProgressCallback progress, bool* cancelFlag)
@@ -58,19 +102,12 @@ class FileWriteStream final : public Stream {
 
 bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const std::string& username,
                               const std::string& password) {
-  std::unique_ptr<NetworkClient> client;
-  if (UrlUtils::isHttpsUrl(url)) {
-    auto* secureClient = new NetworkClientSecure();
-    secureClient->setInsecure();
-    client.reset(secureClient);
-  } else {
-    client.reset(new NetworkClient());
-  }
+  ClientLease lease(UrlUtils::isHttpsUrl(url));
   HTTPClient http;
 
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
 
-  http.begin(*client, url.c_str());
+  http.begin(lease.get(), url.c_str());
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.addHeader("User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
 
@@ -88,7 +125,6 @@ bool HttpDownloader::fetchUrl(const std::string& url, Stream& outContent, const 
   }
 
   http.writeToStream(&outContent);
-
   http.end();
 
   LOG_DBG("HTTP", "Fetch success");
@@ -108,20 +144,13 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, c
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
                                                              ProgressCallback progress, bool* cancelFlag,
                                                              const std::string& username, const std::string& password) {
-  std::unique_ptr<NetworkClient> client;
-  if (UrlUtils::isHttpsUrl(url)) {
-    auto* secureClient = new NetworkClientSecure();
-    secureClient->setInsecure();
-    client.reset(secureClient);
-  } else {
-    client.reset(new NetworkClient());
-  }
+  ClientLease lease(UrlUtils::isHttpsUrl(url));
   HTTPClient http;
 
   LOG_DBG("HTTP", "Downloading: %s", url.c_str());
   LOG_DBG("HTTP", "Destination: %s", destPath.c_str());
 
-  http.begin(*client, url.c_str());
+  http.begin(lease.get(), url.c_str());
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.addHeader("User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
 

@@ -1,6 +1,7 @@
 #include "ActivityManager.h"
 
 #include <HalPowerManager.h>
+#include <esp_heap_caps.h>
 
 #include <algorithm>
 
@@ -18,13 +19,26 @@
 #include "settings/SettingsActivity.h"
 #include "util/FullScreenMessageActivity.h"
 
+static StaticSemaphore_t s_renderingMutexBuffer;
+static StaticTask_t s_renderTaskTCB;
+static StackType_t s_renderTaskStack[8192];
+
+ActivityManager::ActivityManager(GfxRenderer& renderer, MappedInputManager& mappedInput)
+    : renderer(renderer),
+      mappedInput(mappedInput),
+      renderingMutex(xSemaphoreCreateMutexStatic(&s_renderingMutexBuffer)) {
+  assert(renderingMutex != nullptr && "Failed to create rendering mutex");
+  stackActivities.reserve(10);
+}
+
 void ActivityManager::begin() {
-  xTaskCreate(&renderTaskTrampoline, "ActivityManagerRender",
-              8192,              // Stack size
-              this,              // Parameters
-              1,                 // Priority
-              &renderTaskHandle  // Task handle
-  );
+  // sizeof / sizeof is in units of StackType_t (uint8_t on ESP-IDF, i.e. bytes), which
+  // is what xTaskCreateStatic's depth argument expects regardless of platform width.
+  renderTaskHandle = xTaskCreateStatic(&renderTaskTrampoline, "ActivityManagerRender",
+                                       sizeof(s_renderTaskStack) / sizeof(StackType_t),
+                                       this,  // Parameters
+                                       1,     // Priority
+                                       s_renderTaskStack, &s_renderTaskTCB);
   assert(renderTaskHandle != nullptr && "Failed to create render task");
 }
 
@@ -151,6 +165,14 @@ void ActivityManager::exitActivity(const RenderLock& lock) {
   if (currentActivity) {
     currentActivity->onExit();
     currentActivity.reset();
+    // The activity just freed everything it allocated. FreeBlocks rising across
+    // exits is the smoking gun for activity-scoped fragmentation — exactly the
+    // case the per-activity arena (step 2) is designed to eliminate.
+    multi_heap_info_t info;
+    heap_caps_get_info(&info, MALLOC_CAP_DEFAULT);
+    LOG_DBG("MEM", "Post-exit: Free=%u MaxAlloc=%u FreeBlocks=%u AllocBlocks=%u",
+            static_cast<unsigned>(info.total_free_bytes), static_cast<unsigned>(info.largest_free_block),
+            static_cast<unsigned>(info.free_blocks), static_cast<unsigned>(info.allocated_blocks));
   }
 }
 
