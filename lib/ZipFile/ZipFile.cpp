@@ -241,11 +241,16 @@ bool ZipFile::loadZipDetails() {
   file.seek(fileSize - scanRange);
   file.read(buffer, scanRange);
 
-  // Scan backwards for the signature
+  // Scan backwards for the signature. RISC-V faults on unaligned multi-byte
+  // loads, and `i` is a byte cursor into a malloc'd buffer, so a direct
+  // `*reinterpret_cast<uint32_t*>(&buffer[i])` will eventually land on an
+  // odd offset and crash silently. memcpy is the portable load.
   int foundOffset = -1;
   for (int i = scanRange - 22; i >= 0; i--) {
     constexpr uint32_t signature = 0x06054b50;
-    if (*reinterpret_cast<uint32_t*>(&buffer[i]) == signature) {
+    uint32_t candidate;
+    memcpy(&candidate, &buffer[i], sizeof(candidate));
+    if (candidate == signature) {
       foundOffset = i;
       break;
     }
@@ -257,12 +262,12 @@ bool ZipFile::loadZipDetails() {
     return false;
   }
 
-  // Now extract the values we need from the EOCD record
-  // Relative positions within EOCD:
-  // Offset 10: Total number of entries (2 bytes)
-  // Offset 16: Offset of start of central directory with respect to the starting disk number (4 bytes)
-  zipDetails.totalEntries = *reinterpret_cast<uint16_t*>(&buffer[foundOffset + 10]);
-  zipDetails.centralDirOffset = *reinterpret_cast<uint32_t*>(&buffer[foundOffset + 16]);
+  // EOCD record layout:
+  //   offset 10: total number of entries  (uint16)
+  //   offset 16: central directory offset  (uint32)
+  // Same alignment hazard as the signature scan: foundOffset is arbitrary.
+  memcpy(&zipDetails.totalEntries, &buffer[foundOffset + 10], sizeof(zipDetails.totalEntries));
+  memcpy(&zipDetails.centralDirOffset, &buffer[foundOffset + 16], sizeof(zipDetails.centralDirOffset));
   zipDetails.isSet = true;
 
   free(buffer);
