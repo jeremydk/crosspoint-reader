@@ -11,6 +11,7 @@ class BaseTheme;
 class GfxRenderer;
 class MappedInputManager;
 class ReaderActionContext;
+class WebServer;
 struct SettingInfo;
 struct ThemeMetrics;
 
@@ -47,6 +48,23 @@ struct PluginReaderMenuAction {
 // The plugin appends to `out`. Existing SettingInfo helpers (DynamicString, Toggle, …)
 // are reused so there is no parallel API to learn.
 using PluginWebSettingsAppend = void (*)(std::vector<SettingInfo>& out);
+
+// PluginWebRoute: one HTTP route the plugin contributes to the File Transfer
+// web server. `method` is the int value of HTTPMethod from <WebServer.h>
+// (HTTP_GET=0, HTTP_POST=3, …); kept as int so PluginManifest.h doesn't
+// transitively pull in the Arduino-ESP32 WebServer header.
+//
+// The handler receives the active WebServer so it can read args and emit
+// responses. Used to keep OPDS/Wifi/Font-management routes out of core: each
+// plugin owns its own routes, and File Transfer's web server just iterates
+// PluginRegistry and registers whatever the loaded plugins exposed.
+using PluginWebRouteHandler = void (*)(WebServer& server);
+
+struct PluginWebRoute {
+  const char* path;
+  int method;
+  PluginWebRouteHandler handler;
+};
 
 // PluginThemeEntry: registers a UITheme variant. `id` is the stable numeric
 // value stored in SETTINGS.uiTheme — themes use the existing UI_THEME enum
@@ -86,6 +104,9 @@ struct PluginManifest {
 
   const PluginThemeEntry* themes;
   uint8_t themeCount;
+
+  const PluginWebRoute* webRoutes;
+  uint8_t webRouteCount;
 
   PluginWebSettingsAppend appendWebSettings;
 };

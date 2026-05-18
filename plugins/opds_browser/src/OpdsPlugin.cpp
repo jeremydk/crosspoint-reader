@@ -43,6 +43,10 @@ const PluginHomeMenuEntry kHomeMenuEntries[] = {
 
 }  // namespace
 
+// Defined in OpdsWebRoutes.cpp.
+extern const PluginWebRoute kOpdsWebRoutes[];
+extern const uint8_t kOpdsWebRouteCount;
+
 extern "C" const PluginManifest g_plugin_opds_browser = {
     .id = "opds_browser",
     .name = "OPDS Browser",
@@ -53,5 +57,9 @@ extern "C" const PluginManifest g_plugin_opds_browser = {
     .readerMenuActionCount = 0,
     .homeMenuEntries = kHomeMenuEntries,
     .homeMenuEntryCount = 1,
+    .themes = nullptr,
+    .themeCount = 0,
+    .webRoutes = kOpdsWebRoutes,
+    .webRouteCount = 3,
     .appendWebSettings = nullptr,
 };

@@ -9,7 +9,6 @@
     "Epub": "*",
     "ArduinoJson": "*",
     "HalStorage": "*",
-    "FsHelpers": "*",
-    "PluginOpdsBrowser": "*"
+    "FsHelpers": "*"
   }
 }
