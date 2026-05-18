@@ -16,11 +16,110 @@ import re
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass, field
 
 import serial
 
 
 PHYSICAL_BUTTONS = {"BACK", "CONFIRM", "LEFT", "RIGHT", "UP", "DOWN", "POWER"}
+
+
+@dataclass
+class HeapCap:
+    """Per-capability heap stats from CMD:HEAPDUMP CAPS."""
+    free: int
+    largest: int
+    min_free: int
+    alloc_blocks: int
+    free_blocks: int
+
+
+@dataclass
+class HeapRegion:
+    """One internal heap region from heap_caps_print_heap_info(). C3 splits
+    DRAM into ~5 regions; the SDK only exposes block stats, not addresses
+    or names. Order matches SDK output so you can compare by index across
+    snapshots."""
+    largest_free: int
+    alloc_blocks: int
+    free_blocks: int
+    total_blocks: int
+
+
+@dataclass
+class HeapSnapshot:
+    """Parsed CMD:HEAPDUMP response.
+
+    frag_pct is the headline number: above ~30% means free RAM is split
+    into chunks too small for the next big contiguous allocation (mbedTLS
+    handshake, framebuffer clone) even when total free is comfortable."""
+
+    total: int                          # total heap size (free + allocated)
+    free: int                           # currently free bytes
+    largest_free: int                   # largest single contiguous free block
+    min_free: int                       # low watermark since boot
+    alloc_blocks: int                   # count of allocated blocks
+    free_blocks: int                    # count of free blocks
+    total_blocks: int                   # alloc + free
+    frag_pct: int                       # 100 - (100 * largest_free / free)
+    by_cap: dict[str, HeapCap] = field(default_factory=dict)
+    regions: list[HeapRegion] = field(default_factory=list)  # from REGIONS subcommand
+    integrity_ok: bool | None = None    # None if CHECK wasn't requested
+
+    def compare(self, other: "HeapSnapshot") -> str:
+        """Human-readable diff: what changed from `other` to self."""
+        def delta(a: int, b: int) -> str:
+            d = a - b
+            return f"{d:+d}" if d else "0"
+        return (
+            f"free:         {other.free} -> {self.free} ({delta(self.free, other.free)})\n"
+            f"largest_free: {other.largest_free} -> {self.largest_free} "
+            f"({delta(self.largest_free, other.largest_free)})\n"
+            f"min_free:     {other.min_free} -> {self.min_free} ({delta(self.min_free, other.min_free)})\n"
+            f"frag_pct:     {other.frag_pct}% -> {self.frag_pct}% "
+            f"({delta(self.frag_pct, other.frag_pct)})\n"
+            f"alloc_blocks: {other.alloc_blocks} -> {self.alloc_blocks} "
+            f"({delta(self.alloc_blocks, other.alloc_blocks)})\n"
+            f"free_blocks:  {other.free_blocks} -> {self.free_blocks} "
+            f"({delta(self.free_blocks, other.free_blocks)})"
+        )
+
+
+@dataclass
+class HeapLeakReport:
+    """Delta across one enter+exit of an activity. alloc_blocks_delta != 0
+    after exit means the activity (or a library it pulled in) didn't release
+    every allocation. Pair with HeapSnapshot.compare for byte-level detail."""
+    label: str
+    before: HeapSnapshot
+    after: HeapSnapshot
+
+    @property
+    def alloc_blocks_delta(self) -> int:
+        return self.after.alloc_blocks - self.before.alloc_blocks
+
+    @property
+    def free_bytes_delta(self) -> int:
+        return self.after.free - self.before.free
+
+    @property
+    def largest_free_delta(self) -> int:
+        return self.after.largest_free - self.before.largest_free
+
+    def looks_clean(self, block_tolerance: int = 0) -> bool:
+        """True if alloc_blocks returned to baseline within tolerance.
+        Tolerance absorbs noise from periodic background allocations
+        unrelated to the activity under test."""
+        return abs(self.alloc_blocks_delta) <= block_tolerance
+
+    def __str__(self) -> str:
+        verdict = "CLEAN" if self.looks_clean() else "LEAKED"
+        return (
+            f"{self.label}: {verdict} "
+            f"(alloc_blocks {self.before.alloc_blocks} -> {self.after.alloc_blocks}, "
+            f"free {self.before.free} -> {self.after.free} bytes, "
+            f"largest_free {self.before.largest_free} -> {self.after.largest_free})"
+        )
 
 
 def _autodetect_port() -> str:
@@ -171,6 +270,141 @@ class Device:
         opening the connection to learn what activity we're on without waiting
         for the next transition."""
         self._write("CMD:STATE\n")
+
+    def heap_dump(self, *, caps: bool = False, regions: bool = False,
+                  check: bool = False, timeout: float = 5.0) -> HeapSnapshot:
+        """Issue CMD:HEAPDUMP and parse the response. Summary line is always
+        included. Flags add optional sections:
+          caps     per-capability breakdown
+          regions  per-internal-region (~5 on the C3)
+          check    heap_caps_check_integrity_all()
+
+        Per-block dump and heap_trace are not exposed; both require
+        sdkconfig changes arduino-esp32 ships with disabled."""
+        parts: list[str] = []
+        if caps:
+            parts.append("CAPS")
+        if regions:
+            parts.append("REGIONS")
+        if check:
+            parts.append("CHECK")
+        if len(parts) >= 2:
+            sub = " ALL"
+        elif len(parts) == 1:
+            sub = " " + parts[0]
+        else:
+            sub = ""
+        self._write(f"CMD:HEAPDUMP{sub}\n")
+        # Block until the firmware emits the end marker, so we know every
+        # [HEAP] line for this dump is in the buffer before we parse.
+        self.wait_for(lambda text: "[HEAP] end" in text, timeout=timeout)
+        with self._lock:
+            window = self._slice_since(self._send_cursor)
+        return self._parse_heap_dump([text for _, text in window])
+
+    def measure_activity_leak(
+        self,
+        action,
+        *,
+        label: str = "",
+        settle_s: float = 0.5,
+    ) -> HeapLeakReport:
+        """Run `action(self)` between two heap snapshots and report the delta.
+
+        Typical use:
+            d.go_home()
+            report = d.measure_activity_leak(
+                lambda d: (d.navigate_home_to("Settings"),
+                           d.wait_for_activity("Settings"),
+                           d.tap("BACK"),
+                           d.wait_for_activity("Home")),
+                label="Settings round-trip",
+            )
+            assert report.looks_clean(), str(report)
+
+        settle_s gives deferred frees (render task, etc.) time to run
+        before the post-snapshot. Bump it if false positives show up."""
+        before = self.heap_dump()
+        action(self)
+        time.sleep(settle_s)
+        after = self.heap_dump()
+        return HeapLeakReport(label=label or "activity", before=before, after=after)
+
+    _HEAP_SUMMARY_RE = re.compile(
+        r"\[HEAP\]\s+total=(\d+)\s+free=(\d+)\s+largest=(\d+)\s+min_free=(\d+)\s+"
+        r"alloc_blocks=(\d+)\s+free_blocks=(\d+)\s+total_blocks=(\d+)\s+frag_pct=(\d+)"
+    )
+    _HEAP_CAP_RE = re.compile(
+        r"\[HEAP\]\s+cap=(\S+)\s+free=(\d+)\s+largest=(\d+)\s+min_free=(\d+)\s+"
+        r"alloc_blocks=(\d+)\s+free_blocks=(\d+)"
+    )
+    _HEAP_CHECK_RE = re.compile(r"\[HEAP\]\s+check=(\S+)")
+    # SDK's heap_caps_print_heap_info per-region line. Skips the final summary
+    # line (which starts with "free " not "largest_free_block "); we already
+    # have those numbers from the [HEAP] summary line we emit ourselves.
+    _HEAP_REGION_RE = re.compile(
+        r"largest_free_block\s+(\d+)\s+alloc_blocks\s+(\d+)\s+"
+        r"free_blocks\s+(\d+)\s+total_blocks\s+(\d+)"
+    )
+
+    def _parse_heap_dump(self, lines: list[str]) -> HeapSnapshot:
+        summary: HeapSnapshot | None = None
+        caps: dict[str, HeapCap] = {}
+        regions: list[HeapRegion] = []
+        integrity_ok: bool | None = None
+        in_regions_section = False
+        for text in lines:
+            if "[HEAP] regions_begin" in text:
+                in_regions_section = True
+                continue
+            if "[HEAP] regions_end" in text:
+                in_regions_section = False
+                continue
+            if in_regions_section:
+                m = self._HEAP_REGION_RE.search(text)
+                if m:
+                    regions.append(HeapRegion(
+                        largest_free=int(m.group(1)),
+                        alloc_blocks=int(m.group(2)),
+                        free_blocks=int(m.group(3)),
+                        total_blocks=int(m.group(4)),
+                    ))
+                continue
+            m = self._HEAP_SUMMARY_RE.search(text)
+            if m:
+                summary = HeapSnapshot(
+                    total=int(m.group(1)),
+                    free=int(m.group(2)),
+                    largest_free=int(m.group(3)),
+                    min_free=int(m.group(4)),
+                    alloc_blocks=int(m.group(5)),
+                    free_blocks=int(m.group(6)),
+                    total_blocks=int(m.group(7)),
+                    frag_pct=int(m.group(8)),
+                )
+                continue
+            m = self._HEAP_CAP_RE.search(text)
+            if m:
+                caps[m.group(1)] = HeapCap(
+                    free=int(m.group(2)),
+                    largest=int(m.group(3)),
+                    min_free=int(m.group(4)),
+                    alloc_blocks=int(m.group(5)),
+                    free_blocks=int(m.group(6)),
+                )
+                continue
+            m = self._HEAP_CHECK_RE.search(text)
+            if m:
+                integrity_ok = (m.group(1) == "ok")
+                continue
+        if summary is None:
+            raise RuntimeError(
+                "CMD:HEAPDUMP response missing summary line; saw:\n  " + "\n  ".join(lines)
+            )
+        summary.by_cap = caps
+        summary.regions = regions
+        summary.integrity_ok = integrity_ok
+        return summary
 
     def go_home(self, timeout: float = 10.0) -> None:
         """Test-harness escape: jump straight to Home regardless of current

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Epub.h>
+#include <esp_heap_caps.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
 #include <GfxRenderer.h>
@@ -488,6 +489,66 @@ void loop() {
         // activity, but reachable from any test starting state.
         activityManager.goHome();
         LOG_INF("HARNESS", "go home");
+      } else if (cmd.startsWith("HEAPDUMP")) {
+        // CMD:HEAPDUMP         summary line for the default heap
+        // CMD:HEAPDUMP CAPS    per-capability (DEFAULT, INTERNAL, 8BIT, 32BIT, DMA)
+        // CMD:HEAPDUMP REGIONS per-internal-region via heap_caps_print_heap_info();
+        //                      C3 splits DRAM into ~5 regions, so this reveals where
+        //                      contiguous capacity actually lives.
+        // CMD:HEAPDUMP CHECK   heap_caps_check_integrity_all(). Without
+        //                      CONFIG_HEAP_POISONING_LIGHT in sdkconfig this catches
+        //                      structural metadata corruption only.
+        // CMD:HEAPDUMP ALL     summary + CAPS + REGIONS + CHECK
+        // Every variant ends with '[HEAP] end'; the host reads until that marker.
+        // frag_pct = 100 - (100 * largest_free / free). High means free RAM is split
+        // into chunks smaller than the next big allocation needs (mbedTLS handshake
+        // wants ~50KB contiguous).
+        //
+        // Not exposed; would need an arduino-esp32 SDK rebuild:
+        //   heap_caps_dump_all()  needs CONFIG_HEAP_POISONING_LIGHT
+        //   heap_trace_*          needs CONFIG_HEAP_TRACING_DEST=standalone
+        String sub = cmd.length() > 8 ? cmd.substring(9) : String("");
+        sub.trim();
+        multi_heap_info_t info;
+        heap_caps_get_info(&info, MALLOC_CAP_DEFAULT);
+        const size_t total = info.total_free_bytes + info.total_allocated_bytes;
+        const unsigned fragPct =
+            info.total_free_bytes > 0 ? 100 - (100u * info.largest_free_block) / info.total_free_bytes : 0;
+        LOG_INF("HEAP",
+                "total=%u free=%u largest=%u min_free=%u alloc_blocks=%u free_blocks=%u "
+                "total_blocks=%u frag_pct=%u",
+                (unsigned)total, (unsigned)info.total_free_bytes, (unsigned)info.largest_free_block,
+                (unsigned)info.minimum_free_bytes, (unsigned)info.allocated_blocks, (unsigned)info.free_blocks,
+                (unsigned)info.total_blocks, fragPct);
+        if (sub == "CAPS" || sub == "ALL") {
+          struct {
+            const char* name;
+            uint32_t cap;
+          } regions[] = {
+              {"DEFAULT", MALLOC_CAP_DEFAULT}, {"INTERNAL", MALLOC_CAP_INTERNAL}, {"8BIT", MALLOC_CAP_8BIT},
+              {"32BIT", MALLOC_CAP_32BIT},     {"DMA", MALLOC_CAP_DMA},
+          };
+          for (const auto& r : regions) {
+            multi_heap_info_t ri;
+            heap_caps_get_info(&ri, r.cap);
+            LOG_INF("HEAP", "cap=%s free=%u largest=%u min_free=%u alloc_blocks=%u free_blocks=%u", r.name,
+                    (unsigned)ri.total_free_bytes, (unsigned)ri.largest_free_block, (unsigned)ri.minimum_free_bytes,
+                    (unsigned)ri.allocated_blocks, (unsigned)ri.free_blocks);
+          }
+        }
+        if (sub == "REGIONS" || sub == "ALL") {
+          // SDK emits its own multi-line per-region report; bracket it with
+          // markers so the host parser can find it.
+          LOG_INF("HEAP", "regions_begin");
+          heap_caps_print_heap_info(MALLOC_CAP_DEFAULT);
+          fflush(stdout);
+          LOG_INF("HEAP", "regions_end");
+        }
+        if (sub == "CHECK" || sub == "ALL") {
+          const bool ok = heap_caps_check_integrity_all(true);
+          LOG_INF("HEAP", "check=%s", ok ? "ok" : "corrupt");
+        }
+        LOG_INF("HEAP", "end");
       }
 #endif
     }
