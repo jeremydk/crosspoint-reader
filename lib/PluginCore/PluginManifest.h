@@ -55,12 +55,23 @@ using PluginWebSettingsAppend = void (*)(std::vector<SettingInfo>& out);
 // activity returned by `makeReader`. EPUB stays in core as the fallback when
 // no plugin format matches.
 //
-// The same hook is the natural place for future per-format hooks (cover
-// thumbnail generation, file icon, browser visibility) — added when we're
-// ready to extract those auxiliary coupling points too.
+// Beyond dispatch, the same entry contributes the cover-thumbnail generator
+// and file icon used by HomeActivity / UITheme / the file browser. Without
+// these, a format's parser lib stays linked even when the reader Activity is
+// gone (covers and icons would still call into it), which defeats the disable.
 struct PluginReaderFormat {
   bool (*matches)(const char* path);
   std::unique_ptr<Activity> (*makeReader)(GfxRenderer& renderer, MappedInputManager& input, const std::string& path);
+
+  // Generate the cover thumbnail for `path` at the requested height. Returns
+  // true on success. Nullable — formats without covers (TXT, PDF without
+  // embedded thumbnails) leave it null and HomeActivity skips the cover.
+  bool (*generateCoverThumb)(const char* path, int coverHeight);
+
+  // UIIcon enum value (from src/components/themes/BaseTheme.h) shown in the
+  // file browser and home recent-books list. Kept as int so PluginManifest.h
+  // doesn't pull in the icon header.
+  int icon;
 };
 
 // PluginWebRoute: one HTTP route the plugin contributes to the File Transfer

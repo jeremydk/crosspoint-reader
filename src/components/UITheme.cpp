@@ -94,18 +94,19 @@ std::string UITheme::getCoverThumbPath(std::string coverBmpPath, int coverHeight
 }
 
 UIIcon UITheme::getFileIcon(const std::string& filename) {
-  if (filename.back() == '/') {
-    return Folder;
+  if (filename.back() == '/') return Folder;
+  // Plugin formats first: each format-plugin's matcher decides whether the
+  // file is "theirs" and returns its icon. EPUB stays in core as the fallback.
+  for (size_t i = 0; i < PluginRegistry::count(); ++i) {
+    const PluginManifest* m = PluginRegistry::all()[i];
+    if (!m) continue;
+    for (uint8_t j = 0; j < m->readerFormatCount; ++j) {
+      const PluginReaderFormat& f = m->readerFormats[j];
+      if (f.matches && f.matches(filename.c_str())) return static_cast<UIIcon>(f.icon);
+    }
   }
-  if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename)) {
-    return Book;
-  }
-  if (FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename)) {
-    return Text;
-  }
-  if (FsHelpers::hasBmpExtension(filename)) {
-    return Image;
-  }
+  if (FsHelpers::hasEpubExtension(filename)) return Book;
+  if (FsHelpers::hasBmpExtension(filename)) return Image;
   return File;
 }
 

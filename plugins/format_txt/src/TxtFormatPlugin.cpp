@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "TxtReaderActivity.h"
+#include "components/themes/BaseTheme.h"  // UIIcon
 
 namespace {
 
@@ -35,7 +36,8 @@ std::unique_ptr<Activity> txtMakeReader(GfxRenderer& renderer, MappedInputManage
 }
 
 const PluginReaderFormat kFormats[] = {
-    {&txtMatches, &txtMakeReader},
+    // No cover generator: TXT/MD files have no embedded thumbnails.
+    {&txtMatches, &txtMakeReader, /*generateCoverThumb*/ nullptr, /*icon*/ Text},
 };
 
 }  // namespace

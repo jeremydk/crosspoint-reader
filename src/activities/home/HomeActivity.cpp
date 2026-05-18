@@ -7,7 +7,6 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Utf8.h>
-#include <Xtc.h>
 
 #include <cstring>
 #include <vector>
@@ -56,49 +55,59 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   Rect popupRect;
 
   int progress = 0;
+  // Cover generators that match this path. EPUB stays in core (the fallback
+  // when no plugin format wants the file); everything else (XTC, future
+  // formats) provides its own generateCoverThumb on PluginReaderFormat.
   for (RecentBook& book : recentBooks) {
-    if (!book.coverBmpPath.empty()) {
-      std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
-      if (!Storage.exists(coverPath.c_str())) {
-        // If epub, try to load the metadata for title/author and cover
-        if (FsHelpers::hasEpubExtension(book.path)) {
-          Epub epub(book.path, "/.crosspoint");
-          // Skip loading css since we only need metadata here
-          epub.load(false, true);
+    if (book.coverBmpPath.empty()) {
+      progress++;
+      continue;
+    }
+    std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
+    if (Storage.exists(coverPath.c_str())) {
+      progress++;
+      continue;
+    }
 
-          // Try to generate thumbnail image for Continue Reading card
-          if (!showingLoading) {
-            showingLoading = true;
-            popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-          }
-          GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-          bool success = epub.generateThumbBmp(coverHeight);
-          if (!success) {
-            RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-            book.coverBmpPath = "";
-          }
+    auto markFailed = [&] {
+      RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+      book.coverBmpPath = "";
+    };
+    auto ensureLoadingShown = [&] {
+      if (showingLoading) return;
+      showingLoading = true;
+      popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+    };
+    auto reportProgress = [&] {
+      GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+    };
+
+    bool handled = false;
+    for (size_t i = 0; !handled && i < PluginRegistry::count(); ++i) {
+      const PluginManifest* m = PluginRegistry::all()[i];
+      if (!m) continue;
+      for (uint8_t j = 0; j < m->readerFormatCount; ++j) {
+        const PluginReaderFormat& f = m->readerFormats[j];
+        if (!f.matches || !f.matches(book.path.c_str())) continue;
+        if (f.generateCoverThumb) {
+          ensureLoadingShown();
+          reportProgress();
+          if (!f.generateCoverThumb(book.path.c_str(), coverHeight)) markFailed();
           coverRendered = false;
           requestUpdate();
-        } else if (FsHelpers::hasXtcExtension(book.path)) {
-          // Handle XTC file
-          Xtc xtc(book.path, "/.crosspoint");
-          if (xtc.load()) {
-            // Try to generate thumbnail image for Continue Reading card
-            if (!showingLoading) {
-              showingLoading = true;
-              popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
-            }
-            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
-            bool success = xtc.generateThumbBmp(coverHeight);
-            if (!success) {
-              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
-              book.coverBmpPath = "";
-            }
-            coverRendered = false;
-            requestUpdate();
-          }
         }
+        handled = true;
+        break;
       }
+    }
+    if (!handled && FsHelpers::hasEpubExtension(book.path)) {
+      Epub epub(book.path, "/.crosspoint");
+      epub.load(false, true);
+      ensureLoadingShown();
+      reportProgress();
+      if (!epub.generateThumbBmp(coverHeight)) markFailed();
+      coverRendered = false;
+      requestUpdate();
     }
     progress++;
   }

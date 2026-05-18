@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "XtcReaderActivity.h"
+#include "components/themes/BaseTheme.h"  // UIIcon
 
 namespace {
 
@@ -34,8 +35,14 @@ std::unique_ptr<Activity> xtcMakeReader(GfxRenderer& renderer, MappedInputManage
   return std::make_unique<XtcReaderActivity>(renderer, input, std::move(xtc));
 }
 
+bool xtcGenerateCover(const char* path, int coverHeight) {
+  Xtc xtc(path, "/.crosspoint");
+  if (!xtc.load()) return false;
+  return xtc.generateThumbBmp(coverHeight);
+}
+
 const PluginReaderFormat kFormats[] = {
-    {&xtcMatches, &xtcMakeReader},
+    {&xtcMatches, &xtcMakeReader, &xtcGenerateCover, /*icon*/ Book},
 };
 
 }  // namespace
