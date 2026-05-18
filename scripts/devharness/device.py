@@ -177,9 +177,13 @@ class Device:
         state. The firmware calls activityManager.goHome() so this works from
         any activity (Reader, FileBrowser, deep settings, etc.) without
         navigation guessing. Use at the start of each test for a clean
-        baseline."""
-        if self.current_activity() == "Home":
-            return
+        baseline.
+
+        Always sends CMD:HOME (no "already on Home" short-circuit) so the
+        post-call window contains a fresh [STATE] activity=Home and a fresh
+        [HOME] menu= line. Downstream callers like home_menu() rely on that
+        freshness; skipping the send saved ~1s but broke them on second
+        invocation from a Home baseline."""
         self._write("CMD:HOME\n")
         # _write snapshots _send_cursor; wait_for defaults to scanning from
         # that point so the [STATE] line emitted while we re-enter the
