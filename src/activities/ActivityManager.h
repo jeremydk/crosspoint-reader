@@ -102,6 +102,12 @@ class ActivityManager {
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;
 
+#ifdef ENABLE_SERIAL_LOG
+  // Re-emit the current activity name as a [STATE] line for the harness.
+  // No-op if there is no current activity (transient between replace/pop).
+  void emitStateForHarness() const;
+#endif
+
   // If immediate is true, the update will be triggered immediately.
   // Otherwise, it will be deferred until the end of the current loop iteration.
   void requestUpdate(bool immediate = false);

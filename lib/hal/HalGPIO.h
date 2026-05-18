@@ -46,6 +46,18 @@ class HalGPIO {
   bool lastUsbConnected = false;
   bool usbStateChanged = false;
 
+#ifdef ENABLE_SERIAL_LOG
+  // Effective button state under injection. Updated each update() as
+  // (physical OR simulated); edges are derived from the prev/curr snapshot
+  // here rather than from inputMgr so injected events fire wasPressed/
+  // wasReleased the same as real ones. _simulatedReleaseAt[i] is non-zero
+  // when a TAP/HOLD has scheduled an auto-release; update() consumes it.
+  bool _simulatedDown[7] = {false};
+  bool _effectiveCurr[7] = {false};
+  bool _effectivePrev[7] = {false};
+  uint32_t _simulatedReleaseAt[7] = {0};
+#endif
+
  public:
   enum class DeviceType : uint8_t { X4, X3 };
 
@@ -69,6 +81,20 @@ class HalGPIO {
   bool wasAnyPressed() const;
   bool wasReleased(uint8_t buttonIndex) const;
   bool wasAnyReleased() const;
+
+#ifdef ENABLE_SERIAL_LOG
+  // Inject a virtual press or release for the test harness. The injected state
+  // OR's into the physical InputManager state, so wasPressed/wasReleased edges
+  // fire normally for every activity. ENABLE_SERIAL_LOG keeps this out of
+  // release/slim builds; the production code path is unchanged.
+  void simulateButton(uint8_t buttonIndex, bool down);
+
+  // Press a button and schedule an auto-release after holdMs. Lets the host
+  // send a single CMD for a tap or a long-press without paying RTT for the
+  // release. The release fires inside the next update() that lands past the
+  // deadline, so timing is sub-loop-tick (~5-20ms granularity in practice).
+  void simulateButtonTap(uint8_t buttonIndex, uint32_t holdMs);
+#endif
   unsigned long getHeldTime() const;
   unsigned long getPowerButtonHeldTime() const;
 
