@@ -1,3 +1,3 @@
-from .device import Device, PHYSICAL_BUTTONS
+from .device import Device, HeapCap, HeapLeakReport, HeapRegion, HeapSnapshot, PHYSICAL_BUTTONS
 
-__all__ = ["Device", "PHYSICAL_BUTTONS"]
+__all__ = ["Device", "HeapCap", "HeapLeakReport", "HeapRegion", "HeapSnapshot", "PHYSICAL_BUTTONS"]
