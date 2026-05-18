@@ -49,6 +49,20 @@ struct PluginReaderMenuAction {
 // are reused so there is no parallel API to learn.
 using PluginWebSettingsAppend = void (*)(std::vector<SettingInfo>& out);
 
+// PluginReaderFormat: registers a book-format handler. The dispatcher
+// (ReaderActivity in core) walks the registered formats in plugin-registration
+// order, picks the first whose `matches` returns true, and launches the
+// activity returned by `makeReader`. EPUB stays in core as the fallback when
+// no plugin format matches.
+//
+// The same hook is the natural place for future per-format hooks (cover
+// thumbnail generation, file icon, browser visibility) — added when we're
+// ready to extract those auxiliary coupling points too.
+struct PluginReaderFormat {
+  bool (*matches)(const char* path);
+  std::unique_ptr<Activity> (*makeReader)(GfxRenderer& renderer, MappedInputManager& input, const std::string& path);
+};
+
 // PluginWebRoute: one HTTP route the plugin contributes to the File Transfer
 // web server. `method` is the int value of HTTPMethod from <WebServer.h>
 // (HTTP_GET=0, HTTP_POST=3, …); kept as int so PluginManifest.h doesn't
@@ -107,6 +121,9 @@ struct PluginManifest {
 
   const PluginWebRoute* webRoutes;
   uint8_t webRouteCount;
+
+  const PluginReaderFormat* readerFormats;
+  uint8_t readerFormatCount;
 
   PluginWebSettingsAppend appendWebSettings;
 };

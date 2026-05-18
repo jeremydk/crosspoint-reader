@@ -6,20 +6,11 @@
 #include "CrossPointSettings.h"
 #include "Epub.h"
 #include "EpubReaderActivity.h"
+#include "PluginManifest.h"
+#include "PluginRegistry.h"
 #include "SdCardFontSystem.h"
-#include "Txt.h"
-#include "TxtReaderActivity.h"
-#include "Xtc.h"
-#include "XtcReaderActivity.h"
 #include "activities/util/BmpViewerActivity.h"
 #include "activities/util/FullScreenMessageActivity.h"
-
-bool ReaderActivity::isXtcFile(const std::string& path) { return FsHelpers::hasXtcExtension(path); }
-
-bool ReaderActivity::isTxtFile(const std::string& path) {
-  return FsHelpers::hasTxtExtension(path) ||
-         FsHelpers::hasMarkdownExtension(path);  // Treat .md as txt files (until we have a markdown reader)
-}
 
 bool ReaderActivity::isBmpFile(const std::string& path) { return FsHelpers::hasBmpExtension(path); }
 
@@ -35,36 +26,6 @@ std::unique_ptr<Epub> ReaderActivity::loadEpub(const std::string& path) {
   }
 
   LOG_ERR("READER", "Failed to load epub");
-  return nullptr;
-}
-
-std::unique_ptr<Xtc> ReaderActivity::loadXtc(const std::string& path) {
-  if (!Storage.exists(path.c_str())) {
-    LOG_ERR("READER", "File does not exist: %s", path.c_str());
-    return nullptr;
-  }
-
-  auto xtc = std::unique_ptr<Xtc>(new Xtc(path, "/.crosspoint"));
-  if (xtc->load()) {
-    return xtc;
-  }
-
-  LOG_ERR("READER", "Failed to load XTC");
-  return nullptr;
-}
-
-std::unique_ptr<Txt> ReaderActivity::loadTxt(const std::string& path) {
-  if (!Storage.exists(path.c_str())) {
-    LOG_ERR("READER", "File does not exist: %s", path.c_str());
-    return nullptr;
-  }
-
-  auto txt = std::unique_ptr<Txt>(new Txt(path, "/.crosspoint"));
-  if (txt->load()) {
-    return txt;
-  }
-
-  LOG_ERR("READER", "Failed to load TXT");
   return nullptr;
 }
 
@@ -84,18 +45,6 @@ void ReaderActivity::onGoToBmpViewer(const std::string& path) {
   activityManager.replaceActivity(std::make_unique<BmpViewerActivity>(renderer, mappedInput, path));
 }
 
-void ReaderActivity::onGoToXtcReader(std::unique_ptr<Xtc> xtc) {
-  const auto xtcPath = xtc->getPath();
-  currentBookPath = xtcPath;
-  activityManager.replaceActivity(std::make_unique<XtcReaderActivity>(renderer, mappedInput, std::move(xtc)));
-}
-
-void ReaderActivity::onGoToTxtReader(std::unique_ptr<Txt> txt) {
-  const auto txtPath = txt->getPath();
-  currentBookPath = txtPath;
-  activityManager.replaceActivity(std::make_unique<TxtReaderActivity>(renderer, mappedInput, std::move(txt)));
-}
-
 void ReaderActivity::onEnter() {
   Activity::onEnter();
 
@@ -109,28 +58,35 @@ void ReaderActivity::onEnter() {
   currentBookPath = initialBookPath;
   if (isBmpFile(initialBookPath)) {
     onGoToBmpViewer(initialBookPath);
-  } else if (isXtcFile(initialBookPath)) {
-    auto xtc = loadXtc(initialBookPath);
-    if (!xtc) {
-      onGoBack();
-      return;
-    }
-    onGoToXtcReader(std::move(xtc));
-  } else if (isTxtFile(initialBookPath)) {
-    auto txt = loadTxt(initialBookPath);
-    if (!txt) {
-      onGoBack();
-      return;
-    }
-    onGoToTxtReader(std::move(txt));
-  } else {
-    auto epub = loadEpub(initialBookPath);
-    if (!epub) {
-      onGoBack();
-      return;
-    }
-    onGoToEpubReader(std::move(epub));
+    return;
   }
+
+  // Plugin-contributed formats get first crack. The first one whose `matches`
+  // accepts the path wins; if none do (or its loader fails), fall through to
+  // the TXT/EPUB built-ins below.
+  for (size_t i = 0; i < PluginRegistry::count(); ++i) {
+    const PluginManifest* m = PluginRegistry::all()[i];
+    if (!m) continue;
+    for (uint8_t j = 0; j < m->readerFormatCount; ++j) {
+      const PluginReaderFormat& f = m->readerFormats[j];
+      if (!f.matches || !f.matches(initialBookPath.c_str())) continue;
+      auto next = f.makeReader ? f.makeReader(renderer, mappedInput, initialBookPath) : nullptr;
+      if (!next) {
+        onGoBack();
+        return;
+      }
+      currentBookPath = initialBookPath;
+      activityManager.replaceActivity(std::move(next));
+      return;
+    }
+  }
+
+  auto epub = loadEpub(initialBookPath);
+  if (!epub) {
+    onGoBack();
+    return;
+  }
+  onGoToEpubReader(std::move(epub));
 }
 
 void ReaderActivity::onGoBack() { finish(); }

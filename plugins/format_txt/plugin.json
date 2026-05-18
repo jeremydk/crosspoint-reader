@@ -1,0 +1,9 @@
+{
+  "id": "format_txt",
+  "name": "TXT reader",
+  "version": "1.0.0",
+  "manifest_symbol": "g_plugin_format_txt",
+  "enabled": true,
+  "build_flags": [],
+  "i18n": []
+}

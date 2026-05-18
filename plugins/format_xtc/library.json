@@ -1,0 +1,12 @@
+{
+  "name": "PluginFormatXtc",
+  "version": "1.0.0",
+  "description": "XTC book-format support as a build-time plugin. Owns the reader and chapter-selection activities; lib/Xtc/ (the parser) stays shared infrastructure for the home-screen cover-thumbnail path until that gets its own hook.",
+  "dependencies": {
+    "PluginCore": "*",
+    "Logging": "*",
+    "I18n": "*",
+    "FsHelpers": "*",
+    "Xtc": "*"
+  }
+}

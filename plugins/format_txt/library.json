@@ -1,0 +1,12 @@
+{
+  "name": "PluginFormatTxt",
+  "version": "1.0.0",
+  "description": "TXT and Markdown reader as a build-time plugin. Owns the TxtReaderActivity; the lib/Txt/ parser stays in lib/ so the rest of core can ignore it.",
+  "dependencies": {
+    "PluginCore": "*",
+    "Logging": "*",
+    "I18n": "*",
+    "FsHelpers": "*",
+    "Txt": "*"
+  }
+}
