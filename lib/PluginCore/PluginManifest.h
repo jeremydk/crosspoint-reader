@@ -7,10 +7,12 @@
 #include <vector>
 
 class Activity;
+class BaseTheme;
 class GfxRenderer;
 class MappedInputManager;
 class ReaderActionContext;
 struct SettingInfo;
+struct ThemeMetrics;
 
 // PluginSettingsMenuEntry: one row in the System settings menu.
 // `launch` returns the activity to push when the row is activated.
@@ -46,6 +48,19 @@ struct PluginReaderMenuAction {
 // are reused so there is no parallel API to learn.
 using PluginWebSettingsAppend = void (*)(std::vector<SettingInfo>& out);
 
+// PluginThemeEntry: registers a UITheme variant. `id` is the stable numeric
+// value stored in SETTINGS.uiTheme — themes use the existing UI_THEME enum
+// values so saved settings survive a plugin disable (the lookup falls back to
+// Classic when the requested theme isn't loaded). `metrics` lives in flash and
+// is owned by the plugin; the theme instance returned by `make` is owned by
+// UITheme.
+struct PluginThemeEntry {
+  uint8_t id;
+  StrId label;
+  std::unique_ptr<BaseTheme> (*make)();
+  const ThemeMetrics* metrics;
+};
+
 // PluginManifest: the single source of truth for what a plugin contributes.
 // Every field except `id` is optional. Leave the count zero and the pointer null
 // for surfaces the plugin doesn't extend.
@@ -68,6 +83,9 @@ struct PluginManifest {
 
   const PluginHomeMenuEntry* homeMenuEntries;
   uint8_t homeMenuEntryCount;
+
+  const PluginThemeEntry* themes;
+  uint8_t themeCount;
 
   PluginWebSettingsAppend appendWebSettings;
 };

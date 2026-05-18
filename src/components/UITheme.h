@@ -1,7 +1,10 @@
 #pragma once
 
+#include <I18n.h>
+
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "CrossPointSettings.h"
 #include "components/themes/BaseTheme.h"
@@ -11,6 +14,13 @@ class UITheme {
   static UITheme instance;
 
  public:
+  // One row for the theme dropdown. Classic is always present (id=0); plugin
+  // themes append themselves in registration order.
+  struct RegisteredTheme {
+    uint8_t id;
+    StrId label;
+  };
+
   UITheme();
   static UITheme& getInstance() { return instance; }
 
@@ -24,6 +34,10 @@ class UITheme {
   static UIIcon getFileIcon(const std::string& filename);
   static int getStatusBarHeight();
   static int getProgressBarHeight();
+
+  // Themes available right now: built-in Classic plus whatever the loaded
+  // plugins contributed. Order is dropdown-display order.
+  static std::vector<RegisteredTheme> getRegisteredThemes();
 
  private:
   const ThemeMetrics* currentMetrics;

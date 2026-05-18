@@ -1,0 +1,10 @@
+{
+  "name": "PluginThemeRoundedRaff",
+  "version": "1.0.0",
+  "description": "RoundedRaff theme packaged as a build-time plugin.",
+  "dependencies": {
+    "PluginCore": "*",
+    "I18n": "*",
+    "Logging": "*"
+  }
+}

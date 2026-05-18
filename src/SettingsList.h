@@ -12,6 +12,7 @@
 #include "CrossPointSettings.h"
 #include "PluginManifest.h"
 #include "PluginRegistry.h"
+#include "components/UITheme.h"
 #include "activities/settings/SettingsActivity.h"
 
 // Build the font family setting dynamically. When registry is non-null, SD card fonts
@@ -120,10 +121,32 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
             StrId::STR_REFRESH_FREQ, &CrossPointSettings::refreshFrequency,
             {StrId::STR_PAGES_1, StrId::STR_PAGES_5, StrId::STR_PAGES_10, StrId::STR_PAGES_15, StrId::STR_PAGES_30},
             "refreshFrequency", StrId::STR_CAT_DISPLAY),
-        SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
-                          {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_EXTENDED,
-                           StrId::STR_THEME_ROUNDEDRAFF},
-                          "uiTheme", StrId::STR_CAT_DISPLAY),
+        // Theme dropdown is built from the live plugin registry. Classic is the
+        // first entry (built into core); each loaded theme plugin appends one
+        // row. The dropdown index doesn't directly equal SETTINGS.uiTheme
+        // anymore: getter/setter translate between the user's dropdown choice
+        // and the stable theme ID stored in settings, so saved selections
+        // survive a theme plugin being disabled (the load falls back to
+        // Classic when the requested ID isn't present).
+        SettingInfo::DynamicEnum(
+            StrId::STR_UI_THEME,
+            [] {
+              std::vector<StrId> labels;
+              for (const auto& t : UITheme::getRegisteredThemes()) labels.push_back(t.label);
+              return labels;
+            }(),
+            [] {
+              const auto themes = UITheme::getRegisteredThemes();
+              for (uint8_t i = 0; i < themes.size(); ++i) {
+                if (themes[i].id == SETTINGS.uiTheme) return i;
+              }
+              return uint8_t{0};
+            },
+            [](uint8_t idx) {
+              const auto themes = UITheme::getRegisteredThemes();
+              if (idx < themes.size()) SETTINGS.uiTheme = themes[idx].id;
+            },
+            "uiTheme", StrId::STR_CAT_DISPLAY),
         SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                             StrId::STR_CAT_DISPLAY),
 

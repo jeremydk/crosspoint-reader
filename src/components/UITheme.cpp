@@ -3,51 +3,68 @@
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <PluginManifest.h>
+#include <PluginRegistry.h>
 
 #include <memory>
 
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
 #include "components/themes/BaseTheme.h"
-#include "components/themes/lyra/Lyra3CoversTheme.h"
-#include "components/themes/lyra/LyraTheme.h"
-#include "components/themes/roundedraff/RoundedRaffTheme.h"
 
 UITheme UITheme::instance;
 
-UITheme::UITheme() {
-  auto themeType = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme);
-  setTheme(themeType);
+namespace {
+// Classic theme is built into core so the firmware always has a fallback when
+// no theme plugin is loaded (or when the user's saved selection points at a
+// theme plugin that's been disabled).
+const PluginThemeEntry* findThemeById(uint8_t id) {
+  for (size_t i = 0; i < PluginRegistry::count(); ++i) {
+    const PluginManifest* m = PluginRegistry::all()[i];
+    if (!m) continue;
+    for (uint8_t j = 0; j < m->themeCount; ++j) {
+      if (m->themes[j].id == id) return &m->themes[j];
+    }
+  }
+  return nullptr;
+}
+}  // namespace
+
+std::vector<UITheme::RegisteredTheme> UITheme::getRegisteredThemes() {
+  std::vector<RegisteredTheme> out;
+  out.reserve(4);
+  out.push_back({static_cast<uint8_t>(CrossPointSettings::UI_THEME::CLASSIC), StrId::STR_THEME_CLASSIC});
+  for (size_t i = 0; i < PluginRegistry::count(); ++i) {
+    const PluginManifest* m = PluginRegistry::all()[i];
+    if (!m) continue;
+    for (uint8_t j = 0; j < m->themeCount; ++j) {
+      out.push_back({m->themes[j].id, m->themes[j].label});
+    }
+  }
+  return out;
 }
 
-void UITheme::reload() {
-  auto themeType = static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme);
-  setTheme(themeType);
-}
+UITheme::UITheme() { setTheme(static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme)); }
+
+void UITheme::reload() { setTheme(static_cast<CrossPointSettings::UI_THEME>(SETTINGS.uiTheme)); }
 
 void UITheme::setTheme(CrossPointSettings::UI_THEME type) {
-  switch (type) {
-    case CrossPointSettings::UI_THEME::CLASSIC:
-      LOG_DBG("UI", "Using Classic theme");
-      currentTheme = std::make_unique<BaseTheme>();
-      currentMetrics = &BaseMetrics::values;
-      break;
-    case CrossPointSettings::UI_THEME::LYRA:
-      LOG_DBG("UI", "Using Lyra theme");
-      currentTheme = std::make_unique<LyraTheme>();
-      currentMetrics = &LyraMetrics::values;
-      break;
-    case CrossPointSettings::UI_THEME::ROUNDEDRAFF:
-      LOG_DBG("UI", "Using RoundedRaff theme");
-      currentTheme = std::make_unique<RoundedRaffTheme>();
-      currentMetrics = &RoundedRaffMetrics::values;
-      break;
-    case CrossPointSettings::UI_THEME::LYRA_3_COVERS:
-      LOG_DBG("UI", "Using Lyra 3 Covers theme");
-      currentTheme = std::make_unique<Lyra3CoversTheme>();
-      currentMetrics = &Lyra3CoversMetrics::values;
-      break;
+  const uint8_t id = static_cast<uint8_t>(type);
+  if (id == CrossPointSettings::UI_THEME::CLASSIC) {
+    LOG_DBG("UI", "Using Classic theme");
+    currentTheme = std::make_unique<BaseTheme>();
+    currentMetrics = &BaseMetrics::values;
+    return;
   }
+  if (const auto* entry = findThemeById(id); entry && entry->make && entry->metrics) {
+    LOG_DBG("UI", "Using plugin theme id=%u", id);
+    currentTheme = entry->make();
+    currentMetrics = entry->metrics;
+    return;
+  }
+  LOG_DBG("UI", "Theme id=%u unavailable; falling back to Classic", id);
+  currentTheme = std::make_unique<BaseTheme>();
+  currentMetrics = &BaseMetrics::values;
 }
 
 int UITheme::getNumberOfItemsPerPage(const GfxRenderer& renderer, bool hasHeader, bool hasTabBar, bool hasButtonHints,

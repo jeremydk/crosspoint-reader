@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "components/themes/lyra/LyraTheme.h"
+#include "LyraTheme.h"
 
 class GfxRenderer;
 

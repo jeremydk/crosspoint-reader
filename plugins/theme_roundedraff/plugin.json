@@ -1,0 +1,9 @@
+{
+  "id": "theme_roundedraff",
+  "name": "RoundedRaff theme",
+  "version": "1.0.0",
+  "manifest_symbol": "g_plugin_theme_roundedraff",
+  "enabled": true,
+  "build_flags": [],
+  "i18n": []
+}

@@ -1,0 +1,10 @@
+{
+  "name": "PluginThemeLyra",
+  "version": "1.0.0",
+  "description": "Lyra and Lyra 3-Covers themes packaged as a build-time plugin.",
+  "dependencies": {
+    "PluginCore": "*",
+    "I18n": "*",
+    "Logging": "*"
+  }
+}
