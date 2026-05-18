@@ -1,0 +1,10 @@
+{
+  "name": "PluginCore",
+  "version": "0.1.0",
+  "description": "Plugin manifest schema and registry for CrossPoint build-time components.",
+  "build": {
+    "flags": [
+      "-I include"
+    ]
+  }
+}

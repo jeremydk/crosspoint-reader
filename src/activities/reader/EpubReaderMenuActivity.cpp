@@ -2,6 +2,8 @@
 
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <PluginManifest.h>
+#include <PluginRegistry.h>
 
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -21,7 +23,7 @@ EpubReaderMenuActivity::EpubReaderMenuActivity(GfxRenderer& renderer, MappedInpu
 
 std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuItems(bool hasFootnotes) {
   std::vector<MenuItem> items;
-  items.reserve(10);
+  items.reserve(12);
   items.push_back({MenuAction::SELECT_CHAPTER, StrId::STR_SELECT_CHAPTER});
   if (hasFootnotes) {
     items.push_back({MenuAction::FOOTNOTES, StrId::STR_FOOTNOTES});
@@ -32,7 +34,20 @@ std::vector<EpubReaderMenuActivity::MenuItem> EpubReaderMenuActivity::buildMenuI
   items.push_back({MenuAction::SCREENSHOT, StrId::STR_SCREENSHOT_BUTTON});
   items.push_back({MenuAction::DISPLAY_QR, StrId::STR_DISPLAY_QR});
   items.push_back({MenuAction::GO_HOME, StrId::STR_GO_HOME_BUTTON});
-  items.push_back({MenuAction::SYNC, StrId::STR_SYNC_PROGRESS});
+
+  // Plugin-contributed reader actions. `isAvailable` (when supplied) gates
+  // visibility for the current state — e.g. KOReader's "Sync" row only appears
+  // when credentials are configured.
+  for (size_t i = 0; i < PluginRegistry::count(); ++i) {
+    const PluginManifest* m = PluginRegistry::all()[i];
+    if (!m) continue;
+    for (uint8_t j = 0; j < m->readerMenuActionCount; ++j) {
+      const PluginReaderMenuAction& act = m->readerMenuActions[j];
+      if (act.isAvailable && !act.isAvailable()) continue;
+      items.push_back({MenuAction::SELECT_CHAPTER /* unused */, act.label, &act});
+    }
+  }
+
   items.push_back({MenuAction::DELETE_CACHE, StrId::STR_DELETE_CACHE});
   return items;
 }
@@ -57,7 +72,18 @@ void EpubReaderMenuActivity::loop() {
   });
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    const auto selectedAction = menuItems[selectedIndex].action;
+    const auto& selectedItem = menuItems[selectedIndex];
+    if (selectedItem.pluginAction != nullptr) {
+      MenuResult r;
+      r.action = -1;
+      r.orientation = pendingOrientation;
+      r.pageTurnOption = selectedPageTurnOption;
+      r.pluginAction = selectedItem.pluginAction;
+      setResult(std::move(r));
+      finish();
+      return;
+    }
+    const auto selectedAction = selectedItem.action;
     if (selectedAction == MenuAction::ROTATE_SCREEN) {
       // Cycle orientation preview locally; actual rotation happens on menu exit.
       pendingOrientation = (pendingOrientation + 1) % orientationLabels.size();

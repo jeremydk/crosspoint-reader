@@ -1,0 +1,60 @@
+#pragma once
+
+#include <I18n.h>
+
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+class Activity;
+class GfxRenderer;
+class MappedInputManager;
+class ReaderActionContext;
+struct SettingInfo;
+
+// PluginSettingsMenuEntry: one row in the System settings menu.
+// `launch` returns the activity to push when the row is activated.
+struct PluginSettingsMenuEntry {
+  StrId label;
+  std::unique_ptr<Activity> (*launch)(GfxRenderer& renderer, MappedInputManager& input);
+};
+
+// PluginReaderMenuAction: an extra row in EpubReaderMenuActivity's options menu.
+// `isAvailable` (nullable; null means always visible) gates whether the row appears
+// for the current book + state — KOReader sync, for example, only shows when
+// credentials are configured.
+// `onSelected` runs with a context that exposes the current position and a
+// release-and-handoff helper for memory-hungry next activities (TLS, etc.).
+struct PluginReaderMenuAction {
+  StrId label;
+  bool (*isAvailable)();
+  void (*onSelected)(ReaderActionContext& ctx);
+};
+
+// PluginWebSettingsAppend: contributes SettingInfo rows to the web config page.
+// The plugin appends to `out`. Existing SettingInfo helpers (DynamicString, Toggle, …)
+// are reused so there is no parallel API to learn.
+using PluginWebSettingsAppend = void (*)(std::vector<SettingInfo>& out);
+
+// PluginManifest: the single source of truth for what a plugin contributes.
+// Every field except `id` is optional. Leave the count zero and the pointer null
+// for surfaces the plugin doesn't extend.
+//
+// One manifest object per plugin. The plugin defines its instance with C
+// linkage (`extern "C" const PluginManifest g_plugin_xyz = { … };`) so the
+// symbol name is predictable across compilers; scripts/gen_plugins.py emits
+// matching `extern "C"` declarations in the registry header.
+struct PluginManifest {
+  const char* id;
+  const char* name;
+
+  void (*onBoot)();
+
+  const PluginSettingsMenuEntry* settingsMenuEntries;
+  uint8_t settingsMenuEntryCount;
+
+  const PluginReaderMenuAction* readerMenuActions;
+  uint8_t readerMenuActionCount;
+
+  PluginWebSettingsAppend appendWebSettings;
+};

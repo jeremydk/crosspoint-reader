@@ -8,9 +8,13 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
+struct PluginReaderMenuAction;  // from PluginCore/PluginManifest.h
+
 class EpubReaderMenuActivity final : public Activity {
  public:
-  // Menu actions available from the reader menu.
+  // Built-in reader menu actions. Plugin-contributed actions don't appear here —
+  // they're carried by MenuItem::pluginAction and routed back to the caller via
+  // MenuResult::pluginAction.
   enum class MenuAction {
     SELECT_CHAPTER,
     FOOTNOTES,
@@ -20,7 +24,6 @@ class EpubReaderMenuActivity final : public Activity {
     SCREENSHOT,
     DISPLAY_QR,
     GO_HOME,
-    SYNC,
     DELETE_CACHE
   };
 
@@ -34,9 +37,13 @@ class EpubReaderMenuActivity final : public Activity {
   void render(RenderLock&&) override;
 
  private:
+  // A MenuItem is either a built-in action (pluginAction == nullptr) or a
+  // plugin-contributed one. The two flavors render identically; dispatch
+  // differs only at confirm time.
   struct MenuItem {
     MenuAction action;
     StrId labelId;
+    const PluginReaderMenuAction* pluginAction = nullptr;
   };
 
   static std::vector<MenuItem> buildMenuItems(bool hasFootnotes);

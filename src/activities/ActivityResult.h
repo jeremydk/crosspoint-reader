@@ -17,10 +17,15 @@ struct KeyboardResult {
   std::string text;
 };
 
+struct PluginReaderMenuAction;  // from PluginCore/PluginManifest.h
+
 struct MenuResult {
   int action = -1;
   uint8_t orientation = 0;
   uint8_t pageTurnOption = 0;
+  // Non-null when the user picked a plugin-contributed reader action. The receiver
+  // routes through `pluginAction->onSelected(...)` and ignores `action`.
+  const PluginReaderMenuAction* pluginAction = nullptr;
 };
 
 struct ChapterResult {

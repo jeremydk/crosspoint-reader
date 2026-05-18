@@ -8,6 +8,8 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <PluginManifest.h>
+#include <ReaderActionContext.h>
 #include <esp_system.h>
 
 #include <iterator>
@@ -19,16 +21,64 @@
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
-#include "KOReaderCredentialStore.h"
-#include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
-#include "ProgressMapper.h"
 #include "QrDisplayActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/ScreenshotUtil.h"
+
+// EpubReaderActionContext: the bridge a plugin reader-menu action sees. Lives
+// here (not in a public header) because it pokes at EpubReaderActivity's
+// internals via friend access.
+class EpubReaderActionContext final : public ReaderActionContext {
+ public:
+  explicit EpubReaderActionContext(EpubReaderActivity& r) : r_(r) {}
+
+  std::shared_ptr<Epub> getEpub() override { return r_.epub; }
+  std::string getEpubPath() const override { return r_.epub ? r_.epub->getPath() : std::string{}; }
+
+  GfxRenderer& getRenderer() override { return r_.renderer; }
+  MappedInputManager& getInput() override { return r_.mappedInput; }
+
+  int getCurrentSpineIndex() const override { return r_.currentSpineIndex; }
+  int getCurrentPage() const override {
+    return r_.section ? r_.section->currentPage : r_.nextPageNumber;
+  }
+  int getTotalPages() const override {
+    return r_.section ? r_.section->pageCount : r_.cachedChapterTotalPageCount;
+  }
+  std::optional<uint16_t> getCurrentParagraphIndex() const override {
+    if (!r_.section) return std::nullopt;
+    const int currentPage = r_.section->currentPage;
+    if (currentPage < 0 || currentPage >= r_.section->pageCount) return std::nullopt;
+    const uint16_t paragraphPage =
+        currentPage > 0 ? static_cast<uint16_t>(currentPage - 1) : static_cast<uint16_t>(currentPage);
+    return r_.section->getParagraphIndexForPage(paragraphPage);
+  }
+
+  bool saveProgress() override {
+    return r_.saveProgress(r_.currentSpineIndex, getCurrentPage(), getTotalPages());
+  }
+
+  void flashSaveErrorPopup() override { r_.pendingSyncSaveError = true; }
+
+  void releaseEpubAndReplace(std::unique_ptr<Activity> newActivity) override {
+    LOG_DBG("PLUGIN", "Releasing epub for plugin handoff (heap before: %u)", (unsigned)ESP.getFreeHeap());
+    {
+      RenderLock lock(r_);
+      if (r_.section) r_.nextPageNumber = r_.section->currentPage;
+      r_.section.reset();
+      r_.epub.reset();
+    }
+    LOG_DBG("PLUGIN", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
+    activityManager.replaceActivity(std::move(newActivity));
+  }
+
+ private:
+  EpubReaderActivity& r_;
+};
 
 namespace {
 // pagesPerRefresh now comes from SETTINGS.getRefreshFrequency()
@@ -164,7 +214,7 @@ void EpubReaderActivity::loop() {
                              applyOrientation(menu.orientation);
                              toggleAutoPageTurn(menu.pageTurnOption);
                              if (!result.isCancelled) {
-                               onReaderMenuConfirm(static_cast<EpubReaderMenuActivity::MenuAction>(menu.action));
+                               onReaderMenuConfirm(menu);
                              }
                            });
   }
@@ -308,7 +358,13 @@ void EpubReaderActivity::jumpToPercent(int percent) {
   }
 }
 
-void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action) {
+void EpubReaderActivity::onReaderMenuConfirm(const MenuResult& menu) {
+  if (menu.pluginAction != nullptr) {
+    EpubReaderActionContext ctx(*this);
+    menu.pluginAction->onSelected(ctx);
+    return;
+  }
+  const auto action = static_cast<EpubReaderMenuActivity::MenuAction>(menu.action);
   switch (action) {
     case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER: {
       const int spineIdx = currentSpineIndex;
@@ -408,57 +464,6 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
         pendingScreenshot = true;
       }
       requestUpdate();
-      break;
-    }
-    case EpubReaderMenuActivity::MenuAction::SYNC: {
-      if (KOREADER_STORE.hasCredentials()) {
-        const int currentPage = section ? section->currentPage : nextPageNumber;
-        const int totalPages = section ? section->pageCount : cachedChapterTotalPageCount;
-        std::optional<uint16_t> paragraphIndex;
-        if (section && currentPage >= 0 && currentPage < section->pageCount) {
-          const uint16_t paragraphPage =
-              currentPage > 0 ? static_cast<uint16_t>(currentPage - 1) : static_cast<uint16_t>(currentPage);
-          if (const auto pIdx = section->getParagraphIndexForPage(paragraphPage)) {
-            paragraphIndex = *pIdx;
-          }
-        }
-
-        // Pre-compute local KO position and chapter name while Epub is still in RAM.
-        CrossPointPosition localPos = {currentSpineIndex, currentPage, totalPages};
-        if (paragraphIndex.has_value()) {
-          localPos.paragraphIndex = *paragraphIndex;
-          localPos.hasParagraphIndex = true;
-        }
-        KOReaderPosition localKoPos = ProgressMapper::toKOReader(epub, localPos);
-        const int tocIdx = epub->getTocIndexForSpineIndex(currentSpineIndex);
-        std::string localChapterName = (tocIdx >= 0) ? epub->getTocItem(tocIdx).title : "";
-        const std::string savedEpubPath = epub->getPath();
-
-        // Persist current position so the reader resumes at the right page on return.
-        // goToReader() depends on this file, so abort the sync if the write fails.
-        if (!saveProgress(currentSpineIndex, currentPage, totalPages)) {
-          LOG_ERR("KOSync", "Aborting sync because current progress could not be saved");
-          pendingSyncSaveError = true;
-          requestUpdate();
-          return;
-        }
-
-        // Release Epub and Section to free ~65KB RAM for the TLS handshake.
-        LOG_DBG("KOSync", "Releasing epub for sync (heap before: %u)", (unsigned)ESP.getFreeHeap());
-        {
-          RenderLock lock(*this);
-          if (section) {
-            nextPageNumber = section->currentPage;
-          }
-          section.reset();
-          epub.reset();
-        }
-        LOG_DBG("KOSync", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
-
-        activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(
-            renderer, mappedInput, savedEpubPath, currentSpineIndex, currentPage, totalPages, std::move(localKoPos),
-            std::move(localChapterName), paragraphIndex));
-      }
       break;
     }
   }

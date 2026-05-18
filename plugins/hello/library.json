@@ -1,0 +1,9 @@
+{
+  "name": "PluginHello",
+  "version": "0.1.0",
+  "description": "Minimal stub plugin. Smoke-tests the build-time plugin pipeline end-to-end.",
+  "dependencies": {
+    "PluginCore": "*",
+    "Logging": "*"
+  }
+}

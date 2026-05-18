@@ -1,0 +1,9 @@
+{
+  "id": "hello",
+  "name": "Hello (stub)",
+  "version": "0.1.0",
+  "manifest_symbol": "g_plugin_hello",
+  "enabled": true,
+  "build_flags": [],
+  "i18n": []
+}

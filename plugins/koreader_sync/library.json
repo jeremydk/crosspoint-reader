@@ -1,0 +1,16 @@
+{
+  "name": "PluginKOReaderSync",
+  "version": "1.0.0",
+  "description": "KOReader progress-sync client packaged as a build-time plugin.",
+  "dependencies": {
+    "PluginCore": "*",
+    "Logging": "*",
+    "I18n": "*",
+    "Epub": "*",
+    "ArduinoJson": "*",
+    "HalStorage": "*"
+  },
+  "build": {
+    "flags": []
+  }
+}

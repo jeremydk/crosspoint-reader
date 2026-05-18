@@ -2,6 +2,7 @@
 #include <I18n.h>
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -9,13 +10,15 @@
 #include "activities/Activity.h"
 #include "util/ButtonNavigator.h"
 
+class GfxRenderer;
+class MappedInputManager;
+
 enum class SettingType { TOGGLE, ENUM, ACTION, VALUE, STRING };
 
 enum class SettingAction {
   None,
   RemapFrontButtons,
   CustomiseStatusBar,
-  KOReaderSync,
   OPDSBrowser,
   Network,
   ClearCache,
@@ -23,6 +26,8 @@ enum class SettingAction {
   SdFirmwareUpdate,
   Language,
   DownloadFonts,
+  // Plugin-launched action. Dispatch uses SettingInfo::pluginLaunch, not a switch case.
+  Plugin,
 };
 
 struct SettingInfo {
@@ -53,6 +58,11 @@ struct SettingInfo {
   std::function<void(uint8_t)> valueSetter;
   std::function<std::string()> stringGetter;
   std::function<void(const std::string&)> stringSetter;
+
+  // Set for plugin-contributed ACTION rows (action == SettingAction::Plugin). Returns the
+  // activity to push; the SettingsActivity dispatcher routes through this instead of
+  // the built-in enum switch.
+  std::unique_ptr<Activity> (*pluginLaunch)(GfxRenderer&, MappedInputManager&) = nullptr;
 
   SettingInfo& withObfuscated() {
     obfuscated = true;
@@ -87,6 +97,16 @@ struct SettingInfo {
     s.nameId = nameId;
     s.type = SettingType::ACTION;
     s.action = action;
+    return s;
+  }
+
+  static SettingInfo PluginAction(StrId nameId,
+                                  std::unique_ptr<Activity> (*launch)(GfxRenderer&, MappedInputManager&)) {
+    SettingInfo s;
+    s.nameId = nameId;
+    s.type = SettingType::ACTION;
+    s.action = SettingAction::Plugin;
+    s.pluginLaunch = launch;
     return s;
   }
 

@@ -1,0 +1,9 @@
+{
+  "id": "koreader_sync",
+  "name": "KOReader Sync",
+  "version": "1.0.0",
+  "manifest_symbol": "g_plugin_koreader_sync",
+  "enabled": true,
+  "build_flags": [],
+  "i18n": []
+}

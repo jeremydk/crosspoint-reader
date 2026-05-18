@@ -828,7 +828,10 @@ def main(
     # Default paths (relative to project root)
     default_translations_dir = "lib/I18n/translations"
     default_output_dir = "lib/I18n/"
-    default_src_dirs = ["src", "lib"]
+    # plugins/ is included so STR_* references in build-time plugins survive
+    # --strip-unused; without it, a plugin whose strings aren't also used by
+    # core gets its keys stripped and the plugin fails to compile.
+    default_src_dirs = ["src", "lib", "plugins"]
 
     if translations_dir is None or output_dir is None:
         if len(sys.argv) == 3:
