@@ -154,6 +154,8 @@ class Device:
         button = button.upper()
         if button not in PHYSICAL_BUTTONS:
             raise ValueError(f"unknown physical button: {button}")
+        if not isinstance(hold_ms, int) or hold_ms <= 0:
+            raise ValueError(f"hold_ms must be a positive int, got {hold_ms!r}")
         self._write(f"CMD:BTN TAP {button}\n" if hold_ms == 80
                     else f"CMD:BTN HOLD {button} {hold_ms}\n")
 
@@ -164,6 +166,8 @@ class Device:
         button = button.upper()
         if button not in PHYSICAL_BUTTONS:
             raise ValueError(f"unknown physical button: {button}")
+        if not isinstance(ms, int) or ms <= 0:
+            raise ValueError(f"ms must be a positive int, got {ms!r}")
         self._write(f"CMD:BTN HOLD {button} {ms}\n")
 
     def request_state(self) -> None:
@@ -264,14 +268,14 @@ class Device:
         patterns like `hold(...); wait_for(...)` aren't racy. Pass
         since=lines_count() explicitly to scan only future lines, or since=0
         to scan everything still in the buffer."""
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         with self._cond:
             start = since if since is not None else self._send_cursor
             while True:
                 for _ts, text in self._slice_since(start):
                     if predicate(text):
                         return text
-                remaining = deadline - time.time()
+                remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError(f"wait_for timed out after {timeout:.1f}s")
                 self._cond.wait(timeout=remaining)
