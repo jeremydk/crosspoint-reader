@@ -15,7 +15,8 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
-#include "OpdsServerStore.h"
+#include "PluginManifest.h"
+#include "PluginRegistry.h"
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -25,9 +26,7 @@ int HomeActivity::getMenuItemCount() const {
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
-  if (hasOpdsServers) {
-    count++;
-  }
+  count += static_cast<int>(visibleHomeEntries.size());
   return count;
 }
 
@@ -111,7 +110,16 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 void HomeActivity::onEnter() {
   Activity::onEnter();
 
-  hasOpdsServers = OPDS_STORE.hasServers();
+  visibleHomeEntries.clear();
+  for (size_t i = 0; i < PluginRegistry::count(); ++i) {
+    const PluginManifest* m = PluginRegistry::all()[i];
+    if (!m) continue;
+    for (uint8_t j = 0; j < m->homeMenuEntryCount; ++j) {
+      const PluginHomeMenuEntry& e = m->homeMenuEntries[j];
+      if (e.isAvailable && !e.isAvailable()) continue;
+      visibleHomeEntries.push_back(&e);
+    }
+  }
 
   selectorIndex = 0;
 
@@ -185,12 +193,12 @@ void HomeActivity::loop() {
   });
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-    // Calculate dynamic indices based on which options are available
     int idx = 0;
     int menuSelectedIndex = selectorIndex - static_cast<int>(recentBooks.size());
     const int fileBrowserIdx = idx++;
     const int recentsIdx = idx++;
-    const int opdsLibraryIdx = hasOpdsServers ? idx++ : -1;
+    const int pluginEntriesStart = idx;
+    idx += static_cast<int>(visibleHomeEntries.size());
     const int fileTransferIdx = idx++;
     const int settingsIdx = idx;
 
@@ -200,8 +208,8 @@ void HomeActivity::loop() {
       onFileBrowserOpen();
     } else if (menuSelectedIndex == recentsIdx) {
       onRecentsOpen();
-    } else if (menuSelectedIndex == opdsLibraryIdx) {
-      onOpdsBrowserOpen();
+    } else if (menuSelectedIndex >= pluginEntriesStart && menuSelectedIndex < pluginEntriesStart + (int)visibleHomeEntries.size()) {
+      launchPluginHomeEntry(*visibleHomeEntries[menuSelectedIndex - pluginEntriesStart]);
     } else if (menuSelectedIndex == fileTransferIdx) {
       onFileTransferOpen();
     } else if (menuSelectedIndex == settingsIdx) {
@@ -230,9 +238,10 @@ void HomeActivity::render(RenderLock&&) {
                                         tr(STR_SETTINGS_TITLE)};
   std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings};
 
-  if (hasOpdsServers) {
-    menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
-    menuIcons.insert(menuIcons.begin() + 2, Library);
+  // Plugin entries slot in between Recents and File Transfer.
+  for (size_t i = 0; i < visibleHomeEntries.size(); ++i) {
+    menuItems.insert(menuItems.begin() + 2 + i, I18N.get(visibleHomeEntries[i]->label));
+    menuIcons.insert(menuIcons.begin() + 2 + i, Library);
   }
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
@@ -275,4 +284,6 @@ void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
-void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
+void HomeActivity::launchPluginHomeEntry(const PluginHomeMenuEntry& entry) {
+  if (entry.launch) activityManager.replaceActivity(entry.launch(renderer, mappedInput));
+}

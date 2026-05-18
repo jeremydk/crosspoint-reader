@@ -4,10 +4,10 @@
 #include <I18n.h>
 
 #include "MappedInputManager.h"
+#include "OpdsBookBrowserActivity.h"
 #include "OpdsServerStore.h"
 #include "OpdsSettingsActivity.h"
 #include "activities/ActivityManager.h"
-#include "activities/browser/OpdsBookBrowserActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 

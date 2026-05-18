@@ -1,0 +1,9 @@
+{
+  "id": "ota_update",
+  "name": "OTA Update",
+  "version": "1.0.0",
+  "manifest_symbol": "g_plugin_ota_update",
+  "enabled": true,
+  "build_flags": [],
+  "i18n": []
+}

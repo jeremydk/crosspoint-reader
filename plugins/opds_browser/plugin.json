@@ -1,0 +1,9 @@
+{
+  "id": "opds_browser",
+  "name": "OPDS Browser",
+  "version": "1.0.0",
+  "manifest_symbol": "g_plugin_opds_browser",
+  "enabled": true,
+  "build_flags": [],
+  "i18n": []
+}

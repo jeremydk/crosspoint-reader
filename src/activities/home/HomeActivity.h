@@ -8,6 +8,7 @@
 
 struct RecentBook;
 struct Rect;
+struct PluginHomeMenuEntry;
 
 class HomeActivity final : public Activity {
   ButtonNavigator buttonNavigator;
@@ -15,7 +16,9 @@ class HomeActivity final : public Activity {
   bool recentsLoading = false;
   bool recentsLoaded = false;
   bool firstRenderDone = false;
-  bool hasOpdsServers = false;
+  // Plugin-contributed home-menu entries that are currently visible. Snapshotted
+  // at onEnter so render and dispatch agree on positions.
+  std::vector<const PluginHomeMenuEntry*> visibleHomeEntries;
   bool coverRendered = false;      // Track if cover has been rendered once
   bool coverBufferStored = false;  // Track if cover buffer is stored
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
@@ -25,7 +28,7 @@ class HomeActivity final : public Activity {
   void onRecentsOpen();
   void onSettingsOpen();
   void onFileTransferOpen();
-  void onOpdsBrowserOpen();
+  void launchPluginHomeEntry(const PluginHomeMenuEntry& entry);
 
   int getMenuItemCount() const;
   bool storeCoverBuffer();    // Store frame buffer for cover image

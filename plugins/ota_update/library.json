@@ -1,0 +1,11 @@
+{
+  "name": "PluginOtaUpdate",
+  "version": "1.0.0",
+  "description": "Over-the-air firmware update flow packaged as a build-time plugin.",
+  "dependencies": {
+    "PluginCore": "*",
+    "Logging": "*",
+    "I18n": "*",
+    "HalStorage": "*"
+  }
+}

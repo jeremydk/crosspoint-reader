@@ -5,10 +5,10 @@
 #include <WiFi.h>
 
 #include "MappedInputManager.h"
+#include "OtaUpdater.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include "network/OtaUpdater.h"
 
 void OtaUpdateActivity::onWifiSelectionComplete(const bool success) {
   if (!success) {

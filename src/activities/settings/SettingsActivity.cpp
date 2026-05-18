@@ -10,8 +10,6 @@
 #include "FontSelectionActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
-#include "OpdsServerListActivity.h"
-#include "OtaUpdateActivity.h"
 #include "PluginRegistry.h"
 #include "SdCardFontSystem.h"
 #include "SdFirmwareUpdateActivity.h"
@@ -51,7 +49,6 @@ void SettingsActivity::rebuildSettingsLists() {
   controlsSettings.insert(controlsSettings.begin(),
                           SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
 
   for (size_t i = 0; i < PluginRegistry::count(); ++i) {
     const PluginManifest* m = PluginRegistry::all()[i];
@@ -63,7 +60,6 @@ void SettingsActivity::rebuildSettingsLists() {
   }
 
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
   // Insert "Manage Fonts" right after the font family setting so users discover it naturally
@@ -230,17 +226,11 @@ void SettingsActivity::toggleCurrentSetting() {
           startActivityForResult(setting.pluginLaunch(renderer, mappedInput), resultHandler);
         }
         break;
-      case SettingAction::OPDSBrowser:
-        startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
-        break;
       case SettingAction::Network:
         startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput, false), resultHandler);
         break;
       case SettingAction::ClearCache:
         startActivityForResult(std::make_unique<ClearCacheActivity>(renderer, mappedInput), resultHandler);
-        break;
-      case SettingAction::CheckForUpdates:
-        startActivityForResult(std::make_unique<OtaUpdateActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::SdFirmwareUpdate:
         startActivityForResult(std::make_unique<SdFirmwareUpdateActivity>(renderer, mappedInput), resultHandler);

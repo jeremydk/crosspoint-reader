@@ -19,6 +19,16 @@ struct PluginSettingsMenuEntry {
   std::unique_ptr<Activity> (*launch)(GfxRenderer& renderer, MappedInputManager& input);
 };
 
+// PluginHomeMenuEntry: one row in the home-screen menu.
+// `isAvailable` (nullable; null means always visible) gates the row for the
+// current device state — OPDS, for example, only shows when at least one
+// server is configured.
+struct PluginHomeMenuEntry {
+  StrId label;
+  bool (*isAvailable)();
+  std::unique_ptr<Activity> (*launch)(GfxRenderer& renderer, MappedInputManager& input);
+};
+
 // PluginReaderMenuAction: an extra row in EpubReaderMenuActivity's options menu.
 // `isAvailable` (nullable; null means always visible) gates whether the row appears
 // for the current book + state — KOReader sync, for example, only shows when
@@ -55,6 +65,9 @@ struct PluginManifest {
 
   const PluginReaderMenuAction* readerMenuActions;
   uint8_t readerMenuActionCount;
+
+  const PluginHomeMenuEntry* homeMenuEntries;
+  uint8_t homeMenuEntryCount;
 
   PluginWebSettingsAppend appendWebSettings;
 };

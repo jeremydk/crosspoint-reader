@@ -9,12 +9,6 @@ struct OpdsServer {
   std::string password;  // Plaintext in memory; obfuscated with hardware key on disk
 };
 
-class OpdsServerStore;
-namespace JsonSettingsIO {
-bool saveOpds(const OpdsServerStore& store, const char* path);
-bool loadOpds(OpdsServerStore& store, const char* json, bool* needsResave);
-}  // namespace JsonSettingsIO
-
 /**
  * Singleton class for storing OPDS server configurations on the SD card.
  * Passwords are XOR-obfuscated with the device's unique hardware MAC address
@@ -25,14 +19,11 @@ class OpdsServerStore {
   static OpdsServerStore instance;
   std::vector<OpdsServer> servers;
 
-  static constexpr size_t MAX_SERVERS = 8;
-
   OpdsServerStore() = default;
 
-  friend bool JsonSettingsIO::saveOpds(const OpdsServerStore&, const char*);
-  friend bool JsonSettingsIO::loadOpds(OpdsServerStore&, const char*, bool*);
-
  public:
+  static constexpr size_t MAX_SERVERS = 8;
+
   OpdsServerStore(const OpdsServerStore&) = delete;
   OpdsServerStore& operator=(const OpdsServerStore&) = delete;
 

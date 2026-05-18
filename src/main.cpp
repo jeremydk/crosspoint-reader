@@ -19,7 +19,6 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
-#include "OpdsServerStore.h"
 #include "PluginRegistry.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
@@ -299,7 +298,6 @@ void setup() {
 
   SETTINGS.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
-  OPDS_STORE.loadFromFile();
   PluginRegistry::onBoot();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);

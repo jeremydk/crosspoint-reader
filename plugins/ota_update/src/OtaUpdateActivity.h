@@ -1,7 +1,7 @@
 #pragma once
 
 #include "activities/Activity.h"
-#include "network/OtaUpdater.h"
+#include "OtaUpdater.h"
 
 class OtaUpdateActivity : public Activity {
   enum State {

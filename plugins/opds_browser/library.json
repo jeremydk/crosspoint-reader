@@ -1,0 +1,15 @@
+{
+  "name": "PluginOpdsBrowser",
+  "version": "1.0.0",
+  "description": "OPDS catalog browser and per-server credentials, packaged as a build-time plugin.",
+  "dependencies": {
+    "PluginCore": "*",
+    "Logging": "*",
+    "I18n": "*",
+    "Epub": "*",
+    "OpdsParser": "*",
+    "ArduinoJson": "*",
+    "HalStorage": "*",
+    "Serialization": "*"
+  }
+}
