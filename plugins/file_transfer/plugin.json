@@ -1,0 +1,9 @@
+{
+  "id": "file_transfer",
+  "name": "File Transfer",
+  "version": "1.0.0",
+  "manifest_symbol": "g_plugin_file_transfer",
+  "enabled": true,
+  "build_flags": [],
+  "i18n": []
+}

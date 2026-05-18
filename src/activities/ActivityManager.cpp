@@ -10,7 +10,6 @@
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
 #include "home/RecentBooksActivity.h"
-#include "network/CrossPointWebServerActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/SettingsActivity.h"
 #include "util/FullScreenMessageActivity.h"
@@ -163,10 +162,6 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
     currentActivity = std::move(newActivity);
     currentActivity->onEnter();
   }
-}
-
-void ActivityManager::goToFileTransfer() {
-  replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
 }
 
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }

@@ -27,7 +27,6 @@ class HomeActivity final : public Activity {
   void onFileBrowserOpen();
   void onRecentsOpen();
   void onSettingsOpen();
-  void onFileTransferOpen();
   void launchPluginHomeEntry(const PluginHomeMenuEntry& entry);
 
   int getMenuItemCount() const;

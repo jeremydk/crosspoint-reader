@@ -4,9 +4,9 @@
 #include <memory>
 #include <string>
 
-#include "NetworkModeSelectionActivity.h"
+#include "CrossPointWebServer.h"
 #include "activities/Activity.h"
-#include "network/CrossPointWebServer.h"
+#include "activities/network/NetworkModeSelectionActivity.h"
 
 // Web server activity states
 enum class WebServerActivityState {

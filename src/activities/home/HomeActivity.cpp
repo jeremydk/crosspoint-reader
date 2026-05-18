@@ -199,7 +199,6 @@ void HomeActivity::loop() {
     const int recentsIdx = idx++;
     const int pluginEntriesStart = idx;
     idx += static_cast<int>(visibleHomeEntries.size());
-    const int fileTransferIdx = idx++;
     const int settingsIdx = idx;
 
     if (selectorIndex < recentBooks.size()) {
@@ -210,8 +209,6 @@ void HomeActivity::loop() {
       onRecentsOpen();
     } else if (menuSelectedIndex >= pluginEntriesStart && menuSelectedIndex < pluginEntriesStart + (int)visibleHomeEntries.size()) {
       launchPluginHomeEntry(*visibleHomeEntries[menuSelectedIndex - pluginEntriesStart]);
-    } else if (menuSelectedIndex == fileTransferIdx) {
-      onFileTransferOpen();
     } else if (menuSelectedIndex == settingsIdx) {
       onSettingsOpen();
     }
@@ -233,12 +230,11 @@ void HomeActivity::render(RenderLock&&) {
                           recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
-  // Build menu items dynamically
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
-                                        tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings};
+  // Built-in rows in order. Plugin-contributed entries slot in between Recents
+  // and Settings.
+  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {Folder, Recent, Settings};
 
-  // Plugin entries slot in between Recents and File Transfer.
   for (size_t i = 0; i < visibleHomeEntries.size(); ++i) {
     menuItems.insert(menuItems.begin() + 2 + i, I18N.get(visibleHomeEntries[i]->label));
     menuIcons.insert(menuIcons.begin() + 2 + i, Library);
@@ -281,8 +277,6 @@ void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
 void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
-
-void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
 void HomeActivity::launchPluginHomeEntry(const PluginHomeMenuEntry& entry) {
   if (entry.launch) activityManager.replaceActivity(entry.launch(renderer, mappedInput));

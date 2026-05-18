@@ -2,7 +2,9 @@ import os
 import re
 import gzip
 
-SRC_DIR = "src"
+# Walk both core src/ and plugins/ so plugins can ship their own HTML assets;
+# the .generated.h is emitted alongside the source HTML in either tree.
+SCAN_DIRS = ["src", "plugins"]
 
 def minify_html(html: str) -> str:
     # Tags where whitespace should be preserved
@@ -46,7 +48,10 @@ def sanitize_identifier(name: str) -> str:
         sanitized = f"_{sanitized}"
     return sanitized
 
-for root, _, files in os.walk(SRC_DIR):
+for scan_dir in SCAN_DIRS:
+  if not os.path.isdir(scan_dir):
+    continue
+  for root, _, files in os.walk(scan_dir):
     for file in files:
         if file.endswith(".html") or file.endswith(".js"):
             file_path = os.path.join(root, file)

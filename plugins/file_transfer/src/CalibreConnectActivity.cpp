@@ -8,7 +8,7 @@
 
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
-#include "WifiSelectionActivity.h"
+#include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 

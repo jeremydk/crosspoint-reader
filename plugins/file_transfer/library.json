@@ -1,0 +1,15 @@
+{
+  "name": "PluginFileTransfer",
+  "version": "1.0.0",
+  "description": "WiFi-based file transfer web server, WebDAV handler, and Calibre Connect flow, packaged as a build-time plugin. With this disabled the WebServer/WebDAV/HTTP-upload code paths drop out entirely; combined with the other network plugins, the linker strips the WiFi STA stack too.",
+  "dependencies": {
+    "PluginCore": "*",
+    "Logging": "*",
+    "I18n": "*",
+    "Epub": "*",
+    "ArduinoJson": "*",
+    "HalStorage": "*",
+    "FsHelpers": "*",
+    "PluginOpdsBrowser": "*"
+  }
+}

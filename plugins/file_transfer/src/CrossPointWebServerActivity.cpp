@@ -9,11 +9,11 @@
 
 #include <cstddef>
 
+#include "CalibreConnectActivity.h"
 #include "MappedInputManager.h"
-#include "NetworkModeSelectionActivity.h"
 #include "SilentRestart.h"
-#include "WifiSelectionActivity.h"
-#include "activities/network/CalibreConnectActivity.h"
+#include "activities/network/NetworkModeSelectionActivity.h"
+#include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/QrUtils.h"
