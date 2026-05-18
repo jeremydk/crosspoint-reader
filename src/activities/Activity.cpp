@@ -2,7 +2,13 @@
 
 #include "ActivityManager.h"
 
-void Activity::onEnter() { LOG_DBG("ACT", "Entering activity: %s", name.c_str()); }
+void Activity::onEnter() {
+  LOG_DBG("ACT", "Entering activity: %s", name.c_str());
+#ifdef ENABLE_SERIAL_LOG
+  // Canonical activity-transition signal for the host test harness.
+  LOG_INF("STATE", "activity=%s", name.c_str());
+#endif
+}
 
 void Activity::onExit() { LOG_DBG("ACT", "Exiting activity: %s", name.c_str()); }
 
