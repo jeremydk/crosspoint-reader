@@ -1,5 +1,7 @@
 #include "Activity.h"
 
+#include <esp_heap_caps.h>
+
 #include "ActivityManager.h"
 
 void Activity::onEnter() {
@@ -7,10 +9,24 @@ void Activity::onEnter() {
 #ifdef ENABLE_SERIAL_LOG
   // Canonical activity-transition signal for the host test harness.
   LOG_INF("STATE", "activity=%s", name.c_str());
+  // Per-activity heap signal; pair with the matching exit line for the
+  // delta. Drift across many enter/exit cycles surfaces leaks without
+  // an explicit CMD:HEAPDUMP.
+  LOG_INF("HEAP_AT", "enter=%s free=%u largest=%u min_free=%u", name.c_str(),
+          (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT),
+          (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT));
 #endif
 }
 
-void Activity::onExit() { LOG_DBG("ACT", "Exiting activity: %s", name.c_str()); }
+void Activity::onExit() {
+  LOG_DBG("ACT", "Exiting activity: %s", name.c_str());
+#ifdef ENABLE_SERIAL_LOG
+  LOG_INF("HEAP_AT", "exit=%s free=%u largest=%u", name.c_str(),
+          (unsigned)heap_caps_get_free_size(MALLOC_CAP_DEFAULT),
+          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
+#endif
+}
 
 void Activity::requestUpdate(bool immediate) { activityManager.requestUpdate(immediate); }
 
