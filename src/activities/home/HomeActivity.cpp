@@ -246,6 +246,24 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin(), Book);
   }
 
+#ifdef ENABLE_SERIAL_LOG
+  // Emit the navigable menu for the test harness. Symbols are stable across
+  // locales (unlike the translated tr() strings above). The selector indexes
+  // into this list: 0..recentBooks.size()-1 open the matching recent book,
+  // the rest match the action handlers in loop() below.
+  String menuLine;
+  for (size_t i = 0; i < recentBooks.size(); i++) {
+    if (i > 0) menuLine += ",";
+    menuLine += "RecentBook";
+    menuLine += static_cast<int>(i);
+  }
+  if (!recentBooks.empty()) menuLine += ",";
+  menuLine += "FileBrowser,Recents,";
+  if (hasOpdsServers) menuLine += "OpdsBrowser,";
+  menuLine += "FileTransfer,Settings";
+  LOG_INF("HOME", "menu=%s selector=%d", menuLine.c_str(), selectorIndex);
+#endif
+
   GUI.drawButtonMenu(
       renderer,
       Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,

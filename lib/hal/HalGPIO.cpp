@@ -207,10 +207,68 @@ void HalGPIO::update() {
   const bool connected = isUsbConnected();
   usbStateChanged = (connected != lastUsbConnected);
   lastUsbConnected = connected;
+
+#ifdef ENABLE_SERIAL_LOG
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < 7; i++) {
+    // Consume any scheduled auto-release whose deadline has passed.
+    if (_simulatedReleaseAt[i] != 0 && now >= _simulatedReleaseAt[i]) {
+      _simulatedDown[i] = false;
+      _simulatedReleaseAt[i] = 0;
+    }
+    _effectivePrev[i] = _effectiveCurr[i];
+    _effectiveCurr[i] = inputMgr.isPressed(i) || _simulatedDown[i];
+  }
+#endif
 }
 
 bool HalGPIO::wasUsbStateChanged() const { return usbStateChanged; }
 
+#ifdef ENABLE_SERIAL_LOG
+bool HalGPIO::isPressed(uint8_t buttonIndex) const {
+  if (buttonIndex >= 7) return false;
+  return _effectiveCurr[buttonIndex];
+}
+
+bool HalGPIO::wasPressed(uint8_t buttonIndex) const {
+  if (buttonIndex >= 7) return false;
+  return _effectiveCurr[buttonIndex] && !_effectivePrev[buttonIndex];
+}
+
+bool HalGPIO::wasAnyPressed() const {
+  for (uint8_t i = 0; i < 7; i++) {
+    if (_effectiveCurr[i] && !_effectivePrev[i]) return true;
+  }
+  return false;
+}
+
+bool HalGPIO::wasReleased(uint8_t buttonIndex) const {
+  if (buttonIndex >= 7) return false;
+  return !_effectiveCurr[buttonIndex] && _effectivePrev[buttonIndex];
+}
+
+bool HalGPIO::wasAnyReleased() const {
+  for (uint8_t i = 0; i < 7; i++) {
+    if (!_effectiveCurr[i] && _effectivePrev[i]) return true;
+  }
+  return false;
+}
+
+void HalGPIO::simulateButton(uint8_t buttonIndex, bool down) {
+  if (buttonIndex >= 7) return;
+  _simulatedDown[buttonIndex] = down;
+  _simulatedReleaseAt[buttonIndex] = 0;
+}
+
+void HalGPIO::simulateButtonTap(uint8_t buttonIndex, uint32_t holdMs) {
+  if (buttonIndex >= 7) return;
+  _simulatedDown[buttonIndex] = true;
+  // 0 is the "no scheduled release" sentinel; coerce up to 1 ms in the rare
+  // case where millis() rolled to exactly UINT32_MAX-holdMs+1 == 0.
+  const uint32_t deadline = millis() + holdMs;
+  _simulatedReleaseAt[buttonIndex] = deadline == 0 ? 1 : deadline;
+}
+#else
 bool HalGPIO::isPressed(uint8_t buttonIndex) const { return inputMgr.isPressed(buttonIndex); }
 
 bool HalGPIO::wasPressed(uint8_t buttonIndex) const { return inputMgr.wasPressed(buttonIndex); }
@@ -220,6 +278,7 @@ bool HalGPIO::wasAnyPressed() const { return inputMgr.wasAnyPressed(); }
 bool HalGPIO::wasReleased(uint8_t buttonIndex) const { return inputMgr.wasReleased(buttonIndex); }
 
 bool HalGPIO::wasAnyReleased() const { return inputMgr.wasAnyReleased(); }
+#endif
 
 unsigned long HalGPIO::getHeldTime() const { return inputMgr.getHeldTime(); }
 

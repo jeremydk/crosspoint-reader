@@ -19,3 +19,5 @@ build
 lib/EpdFont/scripts/downloaded_fonts/
 lib/EpdFont/scripts/instanced_fonts/
 lib/EpdFont/scripts/output/
+# Local serial harness log capture; written by scripts/devharness when debugging.
+harness.log

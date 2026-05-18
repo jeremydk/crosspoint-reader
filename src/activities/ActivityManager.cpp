@@ -43,6 +43,11 @@ void ActivityManager::renderTaskLoop() {
       HalPowerManager::Lock powerLock;  // Ensure we don't go into low-power mode while rendering
       currentActivity->render(std::move(lock));
     }
+#ifdef ENABLE_SERIAL_LOG
+    // Host harness syncs on this line: a frame has just been pushed to the
+    // e-ink and is visible (or in the process of refreshing).
+    LOG_INF("REFRESH", "done");
+#endif
     // Notify any task blocked in requestUpdateAndWait() that the render is done.
     TaskHandle_t waiter = nullptr;
     taskENTER_CRITICAL(nullptr);
@@ -261,6 +266,16 @@ ScreenshotInfo ActivityManager::getScreenshotInfo() const {
   }
   return {};
 }
+
+#ifdef ENABLE_SERIAL_LOG
+void ActivityManager::emitStateForHarness() const {
+  if (currentActivity) {
+    LOG_INF("STATE", "activity=%s", currentActivity->name.c_str());
+  } else {
+    LOG_INF("STATE", "activity=");
+  }
+}
+#endif
 
 void ActivityManager::requestUpdate(bool immediate) {
   if (immediate) {
