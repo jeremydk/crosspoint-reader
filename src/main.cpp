@@ -454,6 +454,23 @@ void setup() {
     activityManager.goToReader(path);
   }
 
+  if (isSilentReboot) {
+    // Block until the first paint physically completes. refreshDisplay()
+    // waits on the panel BUSY pin so when this returns the user can see the
+    // new activity. Without the wait, an edge captured by gpio.update()
+    // during boot dispatches against an invisible Home and the default
+    // selectorIndex=0 opens the most-recent book.
+    activityManager.requestUpdateAndWait();
+    // Absorb any button held at this point into currentState as a non-edge:
+    // two gpio.update() calls separated by > InputManager's 5ms debounce
+    // transition the held bit through lastDebounceTime into currentState
+    // without setting pressedEvents, so the first loop()'s own gpio.update()
+    // sees state == currentState and emits nothing.
+    gpio.update();
+    delay(10);
+    gpio.update();
+  }
+
   // Ensure we're not still holding the power button before leaving setup
   waitForPowerRelease();
   allowSleepAt = millis() + 2000;
