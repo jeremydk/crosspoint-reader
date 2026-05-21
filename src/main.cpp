@@ -27,6 +27,7 @@
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "network/PeerSync.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -524,6 +525,15 @@ void loop() {
     lastMemPrint = millis();
   }
 
+#ifdef DEV_KEEP_AWAKE
+  // Unattended transport check: run the headless ESP-NOW self-test once after boot settles.
+  static bool peerSelfTestDone = false;
+  if (!peerSelfTestDone && millis() > 4000) {
+    peerSelfTestDone = true;
+    PeerSync().devSelfTest();
+  }
+#endif
+
   // Handle incoming serial commands,
   // nb: we use logSerial from logging to avoid deprecation warnings
   if (logSerial.available() > 0) {
@@ -538,6 +548,11 @@ void loop() {
         logSerial.write(buf, bufferSize);
         logSerial.printf("SCREENSHOT_END\n");
       }
+#ifdef DEV_KEEP_AWAKE
+      else if (cmd == "PEERSELFTEST") {
+        PeerSync().devSelfTest();
+      }
+#endif
     }
   }
 
@@ -573,6 +588,7 @@ void loop() {
     screenshotComboActive = false;
   }
 
+#ifndef DEV_KEEP_AWAKE
   const unsigned long sleepTimeoutMs = SETTINGS.getSleepTimeoutMs();
   if (millis() - lastActivityTime >= sleepTimeoutMs) {
     LOG_DBG("SLP", "Auto-sleep triggered after %lu ms of inactivity", sleepTimeoutMs);
@@ -580,6 +596,9 @@ void loop() {
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
     return;
   }
+#else
+  (void)lastActivityTime;  // DEV_KEEP_AWAKE: idle auto-sleep disabled for unattended reflashing
+#endif
 
   if (millis() >= allowSleepAt && gpio.isPressed(HalGPIO::BTN_POWER) &&
       gpio.getPowerButtonHeldTime() > SETTINGS.getPowerButtonDuration()) {

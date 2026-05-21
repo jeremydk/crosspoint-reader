@@ -22,6 +22,7 @@
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
+#include "PeerSyncActivity.h"
 #include "MappedInputManager.h"
 #include "ProgressMapper.h"
 #include "QrDisplayActivity.h"
@@ -559,6 +560,54 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
             renderer, mappedInput, savedEpubPath, currentSpineIndex, currentPage, totalPages, std::move(localKoPos),
             std::move(localChapterName), paragraphIndex));
       }
+      break;
+    }
+    case EpubReaderMenuActivity::MenuAction::PEER_SYNC: {
+      const int currentPage = section ? section->currentPage : nextPageNumber;
+      const int totalPages = section ? section->pageCount : cachedChapterTotalPageCount;
+      std::optional<uint16_t> paragraphIndex;
+      if (section && currentPage >= 0 && currentPage < section->pageCount) {
+        const uint16_t paragraphPage =
+            currentPage > 0 ? static_cast<uint16_t>(currentPage - 1) : static_cast<uint16_t>(currentPage);
+        if (const auto pIdx = section->getParagraphIndexForPage(paragraphPage)) {
+          paragraphIndex = *pIdx;
+        }
+      }
+
+      // Pre-compute local position, chapter, and title while the Epub is still in RAM.
+      CrossPointPosition localPos = {currentSpineIndex, currentPage, totalPages};
+      if (paragraphIndex.has_value()) {
+        localPos.paragraphIndex = *paragraphIndex;
+        localPos.hasParagraphIndex = true;
+      }
+      KOReaderPosition localKoPos = ProgressMapper::toKOReader(epub, localPos);
+      const int tocIdx = epub->getTocIndexForSpineIndex(currentSpineIndex);
+      std::string localChapterName = (tocIdx >= 0) ? epub->getTocItem(tocIdx).title : "";
+      std::string localBookTitle = epub->getTitle();
+      std::string localBookAuthor = epub->getAuthor();
+      const std::string savedEpubPath = epub->getPath();
+
+      if (!saveProgress(currentSpineIndex, currentPage, totalPages)) {
+        LOG_ERR("PSYNC", "Aborting peer sync because current progress could not be saved");
+        pendingSyncSaveError = true;
+        requestUpdate();
+        return;
+      }
+
+      // Release Epub/Section before bringing up the radio; PeerSyncActivity reloads
+      // metadata lazily only if the user picks a peer to map.
+      {
+        RenderLock lock(*this);
+        if (section) {
+          nextPageNumber = section->currentPage;
+        }
+        section.reset();
+        epub.reset();
+      }
+
+      activityManager.replaceActivity(std::make_unique<PeerSyncActivity>(
+          renderer, mappedInput, savedEpubPath, currentSpineIndex, currentPage, totalPages, std::move(localKoPos),
+          std::move(localChapterName), std::move(localBookTitle), std::move(localBookAuthor), paragraphIndex));
       break;
     }
   }
