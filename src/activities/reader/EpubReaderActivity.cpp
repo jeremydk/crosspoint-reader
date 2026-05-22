@@ -620,7 +620,18 @@ void EpubReaderActivity::toggleAutoPageTurn(const uint8_t selectedPageTurnOption
 void EpubReaderActivity::pageTurn(bool isForwardTurn) {
   if (isForwardTurn) {
     if (section->currentPage < section->pageCount - 1) {
-      section->currentPage++;
+      // Hold the render lock so advancing currentPage and reading preRendered is atomic against
+      // the render task's pre-render pass, which writes preRendered under the same lock.
+      RenderLock lock;
+      const int next = section->currentPage + 1;
+      section->currentPage = next;
+      if (preRendered.ready && preRendered.page && preRendered.spineIndex == currentSpineIndex &&
+          preRendered.pageIndex == next) {
+        // Framebuffer already holds page `next`; render() only flushes it (+ grayscale).
+        useFastDisplay = true;
+      } else {
+        invalidatePreRender();
+      }
     } else {
       // We don't want to delete the section mid-render, so grab the semaphore
       {
@@ -628,11 +639,16 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
         nextPageNumber = 0;
         currentSpineIndex++;
         section.reset();
+        invalidatePreRender();
       }
     }
   } else {
     if (section->currentPage > 0) {
+      // Lock for the same reason as the forward branch: the render task's pre-render pass reads
+      // currentPage and owns preRendered under this lock.
+      RenderLock lock;
       section->currentPage--;
+      invalidatePreRender();
     } else if (currentSpineIndex > 0) {
       // We don't want to delete the section mid-render, so grab the semaphore
       {
@@ -641,6 +657,7 @@ void EpubReaderActivity::pageTurn(bool isForwardTurn) {
         pendingPageJump = std::numeric_limits<uint16_t>::max();
         currentSpineIndex--;
         section.reset();
+        invalidatePreRender();
       }
     }
   }
@@ -703,6 +720,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   const uint16_t viewportHeight = renderer.getScreenHeight() - orientedMarginTop - orientedMarginBottom;
 
   if (!section) {
+    invalidatePreRender();  // a freshly loaded section has no valid staged page
     const auto filepath = epub->getSpineItem(currentSpineIndex).href;
     LOG_DBG("ERS", "Loading file: %s, index: %d", filepath.c_str(), currentSpineIndex);
     section = std::unique_ptr<Section>(new Section(epub, currentSpineIndex, renderer));
@@ -779,47 +797,62 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     }
   }
 
-  renderer.clearScreen();
+  // A forward turn whose next page is already staged in the framebuffer. Branch before
+  // clearScreen() so the staged content survives; paintPage flushes it without re-rastering.
+  const bool fastPath = useFastDisplay && section && preRendered.ready && preRendered.page &&
+                        preRendered.spineIndex == currentSpineIndex && preRendered.pageIndex == section->currentPage;
+  useFastDisplay = false;
+  if (fastPath) {
+    currentPageFootnotes = std::move(preRendered.page->footnotes);
+    const auto start = millis();
+    paintPage(*preRendered.page, orientedMarginTop, orientedMarginLeft, /*contentAlreadyInFb=*/true);
+    LOG_DBG("ERS", "Displayed pre-rendered page in %dms", millis() - start);
+    invalidatePreRender();
+    prerenderNextPage(orientedMarginTop, orientedMarginLeft);
+  } else {
+    renderer.clearScreen();
 
-  if (section->pageCount == 0) {
-    LOG_DBG("ERS", "No pages to render");
-    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_EMPTY_CHAPTER), true, EpdFontFamily::BOLD);
-    renderStatusBar();
-    renderer.displayBuffer();
-    automaticPageTurnActive = false;
-    showPendingSyncSaveError();
-    return;
-  }
-
-  if (section->currentPage < 0 || section->currentPage >= section->pageCount) {
-    LOG_DBG("ERS", "Page out of bounds: %d (max %d)", section->currentPage, section->pageCount);
-    renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_OUT_OF_BOUNDS), true, EpdFontFamily::BOLD);
-    renderStatusBar();
-    renderer.displayBuffer();
-    automaticPageTurnActive = false;
-    showPendingSyncSaveError();
-    return;
-  }
-
-  {
-    auto p = section->loadPageFromSectionFile();
-    if (!p) {
-      LOG_ERR("ERS", "Failed to load page from SD - clearing section cache");
-      section->clearCache();
-      section.reset();
-      requestUpdate();  // Try again after clearing cache
-                        // TODO: prevent infinite loop if the page keeps failing to load for some reason
+    if (section->pageCount == 0) {
+      LOG_DBG("ERS", "No pages to render");
+      renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_EMPTY_CHAPTER), true, EpdFontFamily::BOLD);
+      renderStatusBar();
+      renderer.displayBuffer();
       automaticPageTurnActive = false;
       showPendingSyncSaveError();
       return;
     }
 
-    // Collect footnotes from the loaded page
-    currentPageFootnotes = std::move(p->footnotes);
+    if (section->currentPage < 0 || section->currentPage >= section->pageCount) {
+      LOG_DBG("ERS", "Page out of bounds: %d (max %d)", section->currentPage, section->pageCount);
+      renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_OUT_OF_BOUNDS), true, EpdFontFamily::BOLD);
+      renderStatusBar();
+      renderer.displayBuffer();
+      automaticPageTurnActive = false;
+      showPendingSyncSaveError();
+      return;
+    }
 
-    const auto start = millis();
-    renderContents(std::move(p), orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft);
-    LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
+    {
+      auto p = section->loadPageFromSectionFile();
+      if (!p) {
+        LOG_ERR("ERS", "Failed to load page from SD - clearing section cache");
+        section->clearCache();
+        section.reset();
+        requestUpdate();  // Try again after clearing cache
+                          // TODO: prevent infinite loop if the page keeps failing to load for some reason
+        automaticPageTurnActive = false;
+        showPendingSyncSaveError();
+        return;
+      }
+
+      // Collect footnotes from the loaded page
+      currentPageFootnotes = std::move(p->footnotes);
+
+      const auto start = millis();
+      paintPage(*p, orientedMarginTop, orientedMarginLeft, /*contentAlreadyInFb=*/false);
+      LOG_DBG("ERS", "Rendered page in %dms", millis() - start);
+      prerenderNextPage(orientedMarginTop, orientedMarginLeft);
+    }
   }
   silentIndexNextChapterIfNeeded(viewportWidth, viewportHeight);
   saveProgress(currentSpineIndex, section->currentPage, section->pageCount);
@@ -867,22 +900,33 @@ void EpubReaderActivity::silentIndexNextChapterIfNeeded(const uint16_t viewportW
 bool EpubReaderActivity::saveProgress(int spineIndex, int currentPage, int pageCount) {
   return EpubReaderUtils::saveProgress(*epub, spineIndex, currentPage, pageCount);
 }
-void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int orientedMarginTop,
-                                        const int orientedMarginRight, const int orientedMarginBottom,
-                                        const int orientedMarginLeft) {
+void EpubReaderActivity::paintPage(Page& page, const int orientedMarginTop, const int orientedMarginLeft,
+                                   const bool contentAlreadyInFb) {
   const auto t0 = millis();
 
-  // Font prewarm: scan pass accumulates text, then prewarm, then real render
+  // Prewarm before the BW raster, which needs decoded glyphs. The fast path has no raster, so it
+  // defers prewarm until after the flush (below): the glyphs are only needed by the grayscale
+  // pass, which runs once the page is already visible. The perceived turn is the flush, so prewarm
+  // stays off the pre-display path.
   auto* fcm = renderer.getFontCacheManager();
-  auto scope = fcm->createPrewarmScope();
-  page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);  // scan pass
-  scope.endScanAndPrewarm();
+  std::optional<FontCacheManager::PrewarmScope> scope;
+  const auto prewarm = [&]() {
+    scope.emplace(fcm->createPrewarmScope());
+    page.render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);  // scan pass
+    scope->endScanAndPrewarm();
+  };
+  if (!contentAlreadyInFb) {
+    prewarm();
+  }
   const auto tPrewarm = millis();
 
-  // Force special handling for pages with images when anti-aliasing is on
-  bool imagePageWithAA = page->hasImages() && SETTINGS.textAntiAliasing;
+  // Force special handling for pages with images when anti-aliasing is on. Staged pages are
+  // text-only (image pages are excluded from pre-rendering), so this only fires on the normal path.
+  bool imagePageWithAA = page.hasImages() && SETTINGS.textAntiAliasing;
 
-  page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+  if (!contentAlreadyInFb) {
+    page.render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+  }
   renderStatusBar();
   const auto tBwRender = millis();
 
@@ -893,13 +937,13 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     // Step 1: Display page with image area blanked (text appears, image area white)
     // Step 2: Re-render with images and display again (images appear clean)
     int16_t imgX, imgY, imgW, imgH;
-    if (page->getImageBoundingBox(imgX, imgY, imgW, imgH)) {
+    if (page.getImageBoundingBox(imgX, imgY, imgW, imgH)) {
       renderer.fillRect(imgX + orientedMarginLeft, imgY + orientedMarginTop, imgW, imgH, false);
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 
       // Re-render page content to restore images into the blanked area
       // Status bar is not re-rendered here to avoid reading stale dynamic values (e.g. battery %)
-      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+      page.render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     } else {
       renderer.displayBuffer(HalDisplay::HALF_REFRESH);
@@ -909,6 +953,12 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
     ReaderUtils::displayWithRefreshCycle(renderer, pagesUntilFullRefresh);
   }
   const auto tDisplay = millis();
+
+  // Fast path: prewarm now, after the flush, so the grayscale pass below has its glyphs. The page
+  // is already on screen; this work no longer delays the perceived turn.
+  if (contentAlreadyInFb && SETTINGS.textAntiAliasing) {
+    prewarm();
+  }
 
   // Tiled grayscale: render each plane band-by-band into a small scratch and
   // stream straight to the controller, leaving the BW framebuffer intact so no
@@ -933,7 +983,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
         const int rows = (gh - y < STRIP_ROWS) ? (gh - y) : STRIP_ROWS;
         renderer.beginStripTarget(scratch.get(), y, rows);
         renderer.clearScreen(0x00);
-        page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+        page.render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
         renderer.endStripTarget();
         renderer.writeGrayscalePlaneStrip(true, scratch.get(), y, rows);
       }
@@ -945,7 +995,7 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
         const int rows = (gh - y < STRIP_ROWS) ? (gh - y) : STRIP_ROWS;
         renderer.beginStripTarget(scratch.get(), y, rows);
         renderer.clearScreen(0x00);
-        page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+        page.render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
         renderer.endStripTarget();
         renderer.writeGrayscalePlaneStrip(false, scratch.get(), y, rows);
       }
@@ -978,14 +1028,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
 
       renderer.clearScreen(0x00);
       renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
-      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+      page.render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
       renderer.copyGrayscaleLsbBuffers();
       const auto tGrayLsb = millis();
 
       // Render and copy to MSB buffer
       renderer.clearScreen(0x00);
       renderer.setRenderMode(GfxRenderer::GRAYSCALE_MSB);
-      page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+      page.render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
       renderer.copyGrayscaleMsbBuffers();
       const auto tGrayMsb = millis();
 
@@ -1010,6 +1060,62 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - t0);
     }
   }
+}
+
+void EpubReaderActivity::renderPageContentOnly(Page& page, const int orientedMarginTop, const int orientedMarginLeft) {
+  // Stage BW content into the framebuffer: prewarm then real render. No status bar (superimposed
+  // with live values at display time), no flush. The scope frees its glyph page buffer on return;
+  // the consume path re-prewarms for its grayscale pass.
+  auto* fcm = renderer.getFontCacheManager();
+  auto scope = fcm->createPrewarmScope();
+  page.render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);  // scan pass
+  scope.endScanAndPrewarm();
+  renderer.clearScreen();
+  page.render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
+}
+
+void EpubReaderActivity::prerenderNextPage(const int orientedMarginTop, const int orientedMarginLeft) {
+  // Conservative gates; tune after measuring [FDC] pageBuf= and the held Page on device. A staged
+  // page holds its layout (~2-5 KB) plus a transient prewarm during the raster; never trade a page
+  // turn for an OOM.
+  static constexpr uint32_t PRERENDER_MIN_FREE_HEAP_BYTES = 60000;
+  static constexpr uint32_t PRERENDER_MIN_CONTIG_HEAP_BYTES = 40000;
+
+  if (!section) return;
+  const int next = section->currentPage + 1;
+  if (next >= section->pageCount) return;  // no next page in this section
+  if (preRendered.ready && preRendered.spineIndex == currentSpineIndex && preRendered.pageIndex == next) {
+    return;  // already staged
+  }
+
+  if (ESP.getFreeHeap() < PRERENDER_MIN_FREE_HEAP_BYTES || ESP.getMaxAllocHeap() < PRERENDER_MIN_CONTIG_HEAP_BYTES) {
+    invalidatePreRender();
+    return;
+  }
+
+  const int saved = section->currentPage;
+  section->currentPage = next;
+  auto p = section->loadPageFromSectionFile();
+  section->currentPage = saved;
+  if (!p || p->hasImages()) {
+    // Image pages take the normal (non-staged) path so the image-blanking refresh runs correctly.
+    invalidatePreRender();
+    return;
+  }
+
+  renderPageContentOnly(*p, orientedMarginTop, orientedMarginLeft);  // framebuffer now holds page `next`
+  preRendered.ready = true;
+  preRendered.spineIndex = currentSpineIndex;
+  preRendered.pageIndex = next;
+  preRendered.page = std::move(p);
+  LOG_DBG("ERS", "Pre-rendered page %d/%d", next, section->pageCount - 1);
+}
+
+void EpubReaderActivity::invalidatePreRender() {
+  preRendered.ready = false;
+  preRendered.spineIndex = -1;
+  preRendered.pageIndex = -1;
+  preRendered.page.reset();
 }
 
 void EpubReaderActivity::renderStatusBar() const {
