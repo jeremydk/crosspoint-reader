@@ -968,13 +968,14 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               tGrayDisplay - tGrayMsb, tCleanup - tGrayDisplay, tEnd - t0);
     }
   } else {
-    // Save bw buffer to reset buffer state after grayscale data sync
-    renderer.storeBwBuffer();
-    const auto tBwStore = millis();
-
-    // grayscale rendering
+    // Fallback path for a controller without strip support. grayscale rendering
     // TODO: Only do this if font supports it
     if (SETTINGS.textAntiAliasing) {
+      // Save the BW frame before the grayscale passes overwrite it, restore
+      // after. Only needed when grayscale actually renders.
+      renderer.storeBwBuffer();
+      const auto tBwStore = millis();
+
       renderer.clearScreen(0x00);
       renderer.setRenderMode(GfxRenderer::GRAYSCALE_LSB);
       page->render(renderer, SETTINGS.getReaderFontId(), orientedMarginLeft, orientedMarginTop);
@@ -992,7 +993,6 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
       renderer.displayGrayBuffer();
       const auto tGrayDisplay = millis();
       renderer.setRenderMode(GfxRenderer::BW);
-      // restore the bw data
       renderer.restoreBwBuffer();
       const auto tBwRestore = millis();
 
@@ -1003,15 +1003,11 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
               tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tBwStore - tDisplay, tGrayLsb - tBwStore,
               tGrayMsb - tGrayLsb, tGrayDisplay - tGrayMsb, tBwRestore - tGrayDisplay, tEnd - t0);
     } else {
-      // restore the bw data
-      renderer.restoreBwBuffer();
-      const auto tBwRestore = millis();
-
+      // No anti-aliasing: BW frame already displayed above, no grayscale to
+      // render, so no save/restore.
       const auto tEnd = millis();
-      LOG_DBG("ERS",
-              "Page render: prewarm=%lums bw_render=%lums display=%lums bw_store=%lums bw_restore=%lums total=%lums",
-              tPrewarm - t0, tBwRender - tPrewarm, tDisplay - tBwRender, tBwStore - tDisplay, tBwRestore - tBwStore,
-              tEnd - t0);
+      LOG_DBG("ERS", "Page render: prewarm=%lums bw_render=%lums display=%lums total=%lums", tPrewarm - t0,
+              tBwRender - tPrewarm, tDisplay - tBwRender, tEnd - t0);
     }
   }
 }
