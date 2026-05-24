@@ -1,10 +1,55 @@
 #pragma once
 
+#include <CrossPointSettings.h>
 #include <Epub.h>
+#include <Epub/Section.h>
+#include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
 
+#include <algorithm>
+
+#include "components/UITheme.h"
+
 namespace EpubReaderUtils {
+
+// Compute the Section cache key from current SETTINGS + renderer state.
+// Caller must have the renderer at the reader's intended orientation already
+// (the reader applies it in onEnter; BookOpenPrebuilder skips if the renderer
+// orientation doesn't match SETTINGS.orientation, so its cache key matches the
+// reader's).
+//
+// `autoPageTurnBottomMargin` is true only when the reader is rendering with
+// auto-page-turn active AND the bar slot is small enough that the indicator
+// claims its own slot. Always false for a fresh-open prebuild.
+inline SectionBuildParams computeBuildParams(GfxRenderer& renderer, bool autoPageTurnBottomMargin) {
+  int top, right, bottom, left;
+  renderer.getOrientedViewableTRBL(&top, &right, &bottom, &left);
+  top += SETTINGS.screenMargin;
+  left += SETTINGS.screenMargin;
+  right += SETTINGS.screenMargin;
+  const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
+  if (autoPageTurnBottomMargin &&
+      (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight())) {
+    bottom += std::max(SETTINGS.screenMargin,
+                       static_cast<uint8_t>(statusBarHeight +
+                                            UITheme::getInstance().getMetrics().statusBarVerticalMargin));
+  } else {
+    bottom += std::max(SETTINGS.screenMargin, statusBarHeight);
+  }
+  return {
+      SETTINGS.getReaderFontId(),
+      SETTINGS.getReaderLineCompression(),
+      SETTINGS.extraParagraphSpacing,
+      SETTINGS.paragraphAlignment,
+      static_cast<uint16_t>(renderer.getScreenWidth() - left - right),
+      static_cast<uint16_t>(renderer.getScreenHeight() - top - bottom),
+      SETTINGS.hyphenationEnabled,
+      SETTINGS.embeddedStyle,
+      SETTINGS.imageRendering,
+      SETTINGS.focusReadingEnabled,
+  };
+}
 
 // Persists reader progress for an EPUB to its cache directory. Returns true on success.
 inline bool saveProgress(Epub& epub, int spineIndex, int pageNumber, int pageCount) {

@@ -318,7 +318,7 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       const std::string path = epub->getPath();
       startActivityForResult(
           std::make_unique<EpubReaderChapterSelectionActivity>(renderer, mappedInput, epub, path, spineIdx,
-                                                               lastBuildParams_),
+                                                               lastBuildParams_, prebuilder_),
           [this](const ActivityResult& result) {
             if (!result.isCancelled && currentSpineIndex != std::get<ChapterResult>(result.data).spineIndex) {
               RenderLock lock(*this);
@@ -655,15 +655,16 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     return;
   }
 
+  // Margins/viewport are computed against the live status bar and auto-page-turn state.
+  // The TRBL margins (used as paint coordinates) are also needed below for paintPage; keep
+  // those local while delegating the SectionBuildParams construction to the shared helper.
   int orientedMarginTop, orientedMarginRight, orientedMarginBottom, orientedMarginLeft;
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
                                    &orientedMarginLeft);
   orientedMarginTop += SETTINGS.screenMargin;
   orientedMarginLeft += SETTINGS.screenMargin;
   orientedMarginRight += SETTINGS.screenMargin;
-
   const uint8_t statusBarHeight = UITheme::getInstance().getStatusBarHeight();
-
   if (automaticPageTurnActive &&
       (statusBarHeight == 0 || statusBarHeight == UITheme::getInstance().getProgressBarHeight())) {
     orientedMarginBottom +=
@@ -672,15 +673,7 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   } else {
     orientedMarginBottom += std::max(SETTINGS.screenMargin, statusBarHeight);
   }
-
-  const uint16_t viewportWidth = renderer.getScreenWidth() - orientedMarginLeft - orientedMarginRight;
-  const uint16_t viewportHeight = renderer.getScreenHeight() - orientedMarginTop - orientedMarginBottom;
-  lastBuildParams_ = {
-      SETTINGS.getReaderFontId(), SETTINGS.getReaderLineCompression(),
-      SETTINGS.extraParagraphSpacing, SETTINGS.paragraphAlignment,
-      viewportWidth, viewportHeight,
-      SETTINGS.hyphenationEnabled, SETTINGS.embeddedStyle,
-      SETTINGS.imageRendering, SETTINGS.focusReadingEnabled};
+  lastBuildParams_ = EpubReaderUtils::computeBuildParams(renderer, automaticPageTurnActive);
 
   if (!section) {
     loadSectionForCurrentSpine();
@@ -751,11 +744,14 @@ void EpubReaderActivity::render(RenderLock&& lock) {
     }
   }
 
-  prebuilder_.seedIfNeeded(currentSpineIndex, epub, renderer, lastBuildParams_);
+  // Target the next chapter for background prebuild. setTargetSpine handles
+  // end-of-book (targetSpine == spineItemsCount) by clearing instead of
+  // building, so this is safe at any position.
+  prebuilder_.setTargetSpine(currentSpineIndex + 1, epub, renderer, lastBuildParams_);
 
   // One chunk per page turn, after displayBuffer so the build spreads across
   // reading time with no perceived latency. Render-task only (SdFat-safe).
-  prebuilder_.step(currentSpineIndex);
+  prebuilder_.step();
 
   saveProgress(currentSpineIndex, section->currentPage, section->pageCount);
   showPendingSyncSaveError();

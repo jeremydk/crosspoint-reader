@@ -33,11 +33,13 @@ void RecentBooksActivity::onEnter() {
   loadRecentBooks();
 
   selectorIndex = 0;
+  bookOpenPrebuilder.attach(renderer);
   requestUpdate();
 }
 
 void RecentBooksActivity::onExit() {
   Activity::onExit();
+  bookOpenPrebuilder.detach();
   recentBooks.clear();
 }
 
@@ -96,6 +98,10 @@ void RecentBooksActivity::loop() {
     selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
     requestUpdate();
   });
+
+  const std::string hovered =
+      (!recentBooks.empty() && selectorIndex < recentBooks.size()) ? recentBooks[selectorIndex].path : "";
+  bookOpenPrebuilder.noteHover(hovered);
 }
 
 void RecentBooksActivity::promptRemoveBook(const std::string& path, const std::string& title) {

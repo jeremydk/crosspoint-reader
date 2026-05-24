@@ -119,12 +119,16 @@ void HomeActivity::onEnter() {
   const auto base = static_cast<int>(recentBooks.size());
   selectorIndex = initialMenuItem == HomeMenuItem::NONE ? 0 : base + menuItemToIndex(initialMenuItem, hasOpdsServers);
 
+  bookOpenPrebuilder.attach(renderer);
+
   // Trigger first update
   requestUpdate();
 }
 
 void HomeActivity::onExit() {
   Activity::onExit();
+
+  bookOpenPrebuilder.detach();
 
   // Free the stored cover buffer if any
   freeCoverBuffer();
@@ -168,6 +172,13 @@ void HomeActivity::freeCoverBuffer() {
 
 void HomeActivity::loop() {
   const int menuCount = getMenuItemCount();
+
+  // Hover-prebuild Section 0 for the highlighted book (skipped when the
+  // selector is on a menu item rather than a book; empty path == no work).
+  const std::string hovered = (selectorIndex < static_cast<int>(recentBooks.size()))
+                                  ? recentBooks[selectorIndex].path
+                                  : std::string{};
+  bookOpenPrebuilder.noteHover(hovered);
 
   buttonNavigator.onNext([this, menuCount] {
     selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);

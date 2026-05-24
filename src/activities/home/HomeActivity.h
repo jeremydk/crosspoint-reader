@@ -4,6 +4,7 @@
 
 #include "./FileBrowserActivity.h"
 #include "activities/Activity.h"
+#include "util/BookOpenPrebuilder.h"
 #include "util/ButtonNavigator.h"
 
 struct RecentBook;
@@ -28,6 +29,9 @@ class HomeActivity final : public Activity {
   int coverRectW = 0;
   int coverRectH = 0;
   std::vector<RecentBook> recentBooks;
+  // Hover-prebuild Section 0 for the highlighted recent book. Skipped when
+  // the cursor is on a menu item rather than a book.
+  BookOpenPrebuilder bookOpenPrebuilder;
   const HomeMenuItem initialMenuItem;
 
   // Convert HomeMenuItem to menu index (used in onEnter)

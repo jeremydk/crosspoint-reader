@@ -20,7 +20,7 @@ void ChapterPrebuilder::detach() {
 void ChapterPrebuilder::reset() {
   inFlightSection_.reset();
   inFlightSpine_ = -1;
-  seededForSpine_ = -1;
+  evaluatedTarget_ = -1;
 }
 
 void ChapterPrebuilder::hookTrampoline(void* ctx) {
@@ -53,8 +53,8 @@ void ChapterPrebuilder::drainIfNeeded(int currentSpineIndex, GfxRenderer& render
   LOG_DBG("ERS", "Drain of spine %d took %lums", currentSpineIndex, millis() - t0);
 }
 
-void ChapterPrebuilder::step(int currentSpineIndex) {
-  if (!inFlightSection_ || inFlightSpine_ == currentSpineIndex) return;
+void ChapterPrebuilder::step() {
+  if (!inFlightSection_) return;
   const unsigned long t0 = millis();
   const auto res = inFlightSection_->stepBuild(1);
   LOG_DBG("ERS", "Per-page step spine %d: %lums%s", inFlightSpine_, millis() - t0,
@@ -65,43 +65,46 @@ void ChapterPrebuilder::step(int currentSpineIndex) {
   }
 }
 
-void ChapterPrebuilder::seedIfNeeded(int currentSpineIndex, const std::shared_ptr<Epub>& epub,
-                                     GfxRenderer& renderer, const SectionBuildParams& p) {
+void ChapterPrebuilder::setTargetSpine(int targetSpine, const std::shared_ptr<Epub>& epub,
+                                       GfxRenderer& renderer, const SectionBuildParams& p) {
   if (!epub) return;
-  if (seededForSpine_ == currentSpineIndex) return;
+  if (evaluatedTarget_ == targetSpine) return;  // sticky idempotency
 
-  const int nextSpine = currentSpineIndex + 1;
-  if (nextSpine >= epub->getSpineItemsCount()) {
-    seededForSpine_ = currentSpineIndex;
-    return;
-  }
-
-  if (inFlightSection_ && inFlightSpine_ != nextSpine) {
+  // Target changed (or first call): drop any in-flight build for the prior target.
+  if (inFlightSpine_ != targetSpine) {
     inFlightSection_.reset();
     inFlightSpine_ = -1;
   }
-  if (inFlightSection_) {
-    // Already building this spine; let it run.
-    seededForSpine_ = currentSpineIndex;
+
+  // Treat <0 or out-of-range as "clear" (e.g., reader at end-of-book passes
+  // currentSpineIndex+1 which can equal spineCount).
+  if (targetSpine < 0 || targetSpine >= epub->getSpineItemsCount()) {
+    evaluatedTarget_ = targetSpine;
     return;
   }
 
-  auto candidate = makeUniqueNoThrow<Section>(epub, nextSpine, renderer);
-  if (!candidate) {
-    LOG_ERR("ERS", "OOM allocating prebuild section for spine %d", nextSpine);
+  // Already building the new target -- let it run.
+  if (inFlightSection_) {
+    evaluatedTarget_ = targetSpine;
     return;
+  }
+
+  auto candidate = makeUniqueNoThrow<Section>(epub, targetSpine, renderer);
+  if (!candidate) {
+    LOG_ERR("ERS", "OOM allocating prebuild section for spine %d", targetSpine);
+    return;  // leave evaluatedTarget_ untouched so caller can retry
   }
   if (candidate->loadSectionFile(p)) {
-    seededForSpine_ = currentSpineIndex;
-    return;  // already cached
+    evaluatedTarget_ = targetSpine;
+    return;  // already cached on SD, no build needed
   }
 
-  LOG_DBG("ERS", "Spawning chunked prebuild for spine %d", nextSpine);
+  LOG_DBG("ERS", "Spawning chunked prebuild for spine %d", targetSpine);
   if (!candidate->startBuild(p)) {
-    LOG_ERR("ERS", "Failed to start chunked prebuild for spine %d", nextSpine);
-    return;
+    LOG_ERR("ERS", "Failed to start chunked prebuild for spine %d", targetSpine);
+    return;  // leave evaluatedTarget_ untouched so caller can retry
   }
   inFlightSection_ = std::move(candidate);
-  inFlightSpine_ = nextSpine;
-  seededForSpine_ = currentSpineIndex;
+  inFlightSpine_ = targetSpine;
+  evaluatedTarget_ = targetSpine;
 }

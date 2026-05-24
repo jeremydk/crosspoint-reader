@@ -7,6 +7,7 @@
 
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
+#include "util/BookOpenPrebuilder.h"
 #include "util/ButtonNavigator.h"
 
 class RecentBooksActivity final : public Activity {
@@ -21,6 +22,10 @@ class RecentBooksActivity final : public Activity {
 
   // Recent tab state
   std::vector<RecentBook> recentBooks;
+
+  // Hover-prebuild for Section 0 of the highlighted book. Notified each loop;
+  // builds the cache after the cursor settles so book-open is instant.
+  BookOpenPrebuilder bookOpenPrebuilder;
 
   // Data loading
   void loadRecentBooks();
