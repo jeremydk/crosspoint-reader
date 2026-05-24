@@ -97,6 +97,27 @@ class ChapterHtmlSlimParser {
   static void XMLCALL defaultHandlerExpand(void* userData, const XML_Char* s, int len);
   static void XMLCALL endElement(void* userData, const XML_Char* name);
 
+  // Resumable-parse state. Lives across parseBegin / parseStep / parseFinalize
+  // so the parser can be driven a chunk at a time and yield back to the render
+  // loop between chunks. Heap-resident via member ownership; nothing lives in
+  // the parseAndBuildPages stack frame anymore.
+  //
+  // `parseFile_` is intentionally NOT held open across parseStep boundaries:
+  // SdFat's per-volume sector/cluster cache is shared by all open FsFile
+  // handles, and a read from anything else in the system (drawText fetching
+  // glyphs from SD, ImageBlock probing image dimensions, the reader's page
+  // load) between two stepBuild calls can rotate the cache and make our next
+  // read on the held handle return bytes from a different file's clusters.
+  // We open at the start of each parseStep, seek to `parsePos_`, read,
+  // update `parsePos_`, and close at the end. ~10-20ms open+seek per step is
+  // dwarfed by the e-ink refresh.
+  XML_Parser parser_ = nullptr;
+  FsFile parseFile_;
+  uint32_t parsePos_ = 0;
+  bool parseStarted_ = false;
+  bool parseDone_ = false;
+  bool parseErrored_ = false;
+
  public:
   explicit ChapterHtmlSlimParser(std::shared_ptr<Epub> epub, const std::string& filepath, GfxRenderer& renderer,
                                  const int fontId, const float lineCompression, const bool extraParagraphSpacing,
@@ -127,8 +148,24 @@ class ChapterHtmlSlimParser {
         contentBase(contentBase),
         imageBasePath(imageBasePath) {}
 
-  ~ChapterHtmlSlimParser() = default;
+  ~ChapterHtmlSlimParser();
+
+  // Sync entry: runs begin/step-to-completion/finalize. Existing callers
+  // unaffected.
   bool parseAndBuildPages();
+
+  // Resumable entry. Caller pattern:
+  //   if (!p.parseBegin()) return error;
+  //   while (p.parseStep(N)) { /* do other work, e.g. yield to render loop */ }
+  //   if (!p.parseFinalize()) return error;
+  // `maxChunks` caps PARSE_BUFFER_SIZE iterations per call (each ~1KB of HTML);
+  // returns true if more work remains, false when the input is fully consumed
+  // or on parse error (check parseHadError()).
+  bool parseBegin();
+  bool parseStep(uint32_t maxChunks);
+  bool parseFinalize();  // returns false if a parse error occurred
+  bool parseHadError() const { return parseErrored_; }
+
   void addLineToPage(std::shared_ptr<TextBlock> line);
   const std::vector<std::pair<std::string, uint16_t>>& getAnchors() const { return anchorData; }
 };

@@ -41,7 +41,15 @@ struct PngContext {
 // File I/O callbacks use pFile->fHandle to access the FsFile*,
 // avoiding the need for global file state.
 void* pngOpenWithHandle(const char* filename, int32_t* size) {
-  FsFile* f = new FsFile();
+  // Nothrow: bare `new FsFile()` aborts under `-fno-exceptions` if heap is
+  // fragmented (observed when chunked-prebuild state coexists with a
+  // post-cache-clear cold cover decode). PNG library treats a null handle
+  // as open-failed and skips decode cleanly.
+  FsFile* f = new (std::nothrow) FsFile();
+  if (!f) {
+    LOG_ERR("PNG", "OOM allocating FsFile for %s", filename);
+    return nullptr;
+  }
   if (!Storage.openFileForRead("PNG", std::string(filename), *f)) {
     delete f;
     return nullptr;

@@ -411,11 +411,14 @@ BookMetadataCache::SpineEntry BookMetadataCache::getSpineEntry(const int index) 
     return {};
   }
 
-  // Seek to spine LUT item, read from LUT and get out data
-  bookFile.seek(lutOffset + sizeof(uint32_t) * index);
-  uint32_t spineEntryPos;
+  const uint32_t lutPos = lutOffset + sizeof(uint32_t) * index;
+  if (!seekWithReopenRetry(lutPos, "getSpineEntry")) return {};
+  uint32_t spineEntryPos = 0;
   serialization::readPod(bookFile, spineEntryPos);
-  bookFile.seek(spineEntryPos);
+  if (!bookFile.seek(spineEntryPos)) {
+    LOG_ERR("BMC", "getSpineEntry: seek to entry %u failed", spineEntryPos);
+    return {};
+  }
   return readSpineEntry(bookFile);
 }
 
@@ -430,12 +433,26 @@ BookMetadataCache::TocEntry BookMetadataCache::getTocEntry(const int index) {
     return {};
   }
 
-  // Seek to TOC LUT item, read from LUT and get out data
-  bookFile.seek(lutOffset + sizeof(uint32_t) * spineCount + sizeof(uint32_t) * index);
-  uint32_t tocEntryPos;
+  const uint32_t lutPos = lutOffset + sizeof(uint32_t) * spineCount + sizeof(uint32_t) * index;
+  if (!seekWithReopenRetry(lutPos, "getTocEntry")) return {};
+  uint32_t tocEntryPos = 0;
   serialization::readPod(bookFile, tocEntryPos);
-  bookFile.seek(tocEntryPos);
+  if (!bookFile.seek(tocEntryPos)) {
+    LOG_ERR("BMC", "getTocEntry: seek to entry %u failed", tocEntryPos);
+    return {};
+  }
   return readTocEntry(bookFile);
+}
+
+bool BookMetadataCache::seekWithReopenRetry(const uint32_t pos, const char* ctx) {
+  if (bookFile.seek(pos)) return true;
+  LOG_ERR("BMC", "%s: seek to %u failed, reopening", ctx, pos);
+  bookFile.close();
+  if (!Storage.openFileForRead("BMC", cachePath + bookBinFile, bookFile) || !bookFile.seek(pos)) {
+    LOG_ERR("BMC", "%s: reopen+seek to %u failed", ctx, pos);
+    return false;
+  }
+  return true;
 }
 
 BookMetadataCache::SpineEntry BookMetadataCache::readSpineEntry(FsFile& file) const {

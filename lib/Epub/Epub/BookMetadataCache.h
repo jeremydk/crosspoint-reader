@@ -81,6 +81,11 @@ class BookMetadataCache {
   SpineEntry readSpineEntry(FsFile& file) const;
   TocEntry readTocEntry(FsFile& file) const;
 
+  // Seek bookFile to `pos`, reopening + retrying once if the seek fails. SD
+  // cards occasionally go quiet under heavy concurrent use; the cheap recovery
+  // is to drop and re-open the handle. `ctx` appears in the error log.
+  bool seekWithReopenRetry(uint32_t pos, const char* ctx);
+
  public:
   BookMetadata coreMetadata;
 

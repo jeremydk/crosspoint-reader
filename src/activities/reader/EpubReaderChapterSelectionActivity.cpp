@@ -1,7 +1,9 @@
 #include "EpubReaderChapterSelectionActivity.h"
 
+#include <Epub/Section.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Logging.h>
 
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -21,7 +23,6 @@ void EpubReaderChapterSelectionActivity::onEnter() {
     selectorIndex = 0;
   }
 
-  // Trigger first update
   requestUpdate();
 }
 
@@ -68,6 +69,50 @@ void EpubReaderChapterSelectionActivity::loop() {
     selectorIndex = ButtonNavigator::previousPageIndex(selectorIndex, totalItems, pageItems);
     requestUpdate();
   });
+
+  maybePrebuildHoveredChapter();
+}
+
+void EpubReaderChapterSelectionActivity::maybePrebuildHoveredChapter() {
+  if (!epub || buildParams.viewportWidth == 0 || buildParams.viewportHeight == 0) {
+    return;
+  }
+
+  if (selectorIndex != lastSelectorIndex) {
+    lastSelectorIndex = selectorIndex;
+    lastSelectorChangeMs = millis();
+    prebuildAttempted = false;
+    return;
+  }
+
+  if (prebuildAttempted) return;
+  if (millis() - lastSelectorChangeMs < PREBUILD_SETTLE_MS) return;
+
+  const int targetSpine = epub->getSpineIndexForTocIndex(selectorIndex);
+  if (targetSpine < 0 || targetSpine == currentSpineIndex || targetSpine == prebuiltSpineIndex) {
+    prebuildAttempted = true;
+    return;
+  }
+
+  // Already-cached and freshly-built paths both leave the section cache ready,
+  // so the reader's load on confirm becomes a fast HIT instead of a foreground
+  // BUILD with the INDEXING popup. createSectionFile blocks this activity's
+  // loop for the duration of the build; that's fine -- the user has settled on
+  // this entry and we'd be blocking them in the reader otherwise.
+  Section target(epub, targetSpine, renderer);
+  if (target.loadSectionFile(buildParams)) {
+    prebuiltSpineIndex = targetSpine;
+    prebuildAttempted = true;
+    return;
+  }
+
+  LOG_DBG("ECS", "Hover-prebuilding spine %d", targetSpine);
+  if (!target.createSectionFile(buildParams)) {
+    LOG_ERR("ECS", "Failed hover prebuild for spine %d", targetSpine);
+    return;  // leave attempted=false so a later settle retries
+  }
+  prebuiltSpineIndex = targetSpine;
+  prebuildAttempted = true;
 }
 
 void EpubReaderChapterSelectionActivity::render(RenderLock&&) {

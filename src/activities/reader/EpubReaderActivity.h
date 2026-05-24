@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 
+#include "ChapterPrebuilder.h"
 #include "EpubReaderMenuActivity.h"
 #include "activities/Activity.h"
 
@@ -16,31 +17,25 @@ class EpubReaderActivity final : public Activity {
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
   std::optional<uint16_t> pendingPageJump;
-  // Set when navigating to a footnote href with a fragment (e.g. #note1).
-  // Cleared on the next render after the new section loads and resolves it to a page.
   std::string pendingAnchor;
   int pagesUntilFullRefresh = 0;
   int cachedSpineIndex = 0;
   int cachedChapterTotalPageCount = 0;
+  ChapterPrebuilder prebuilder_;
+  // Viewport + settings snapshot captured each render so subactivities
+  // (chapter selection hover-prebuild) use cache keys matching the reader.
+  SectionBuildParams lastBuildParams_ = {};
   unsigned long lastPageTurnTime = 0UL;
   unsigned long pageTurnDuration = 0UL;
-  // Signals that the next render should reposition within the newly loaded section
-  // based on a cross-book percentage jump.
   bool pendingPercentJump = false;
-  // Normalized 0.0-1.0 progress within the target spine item, computed from book percentage.
   float pendingSpineProgress = 0.0f;
   bool pendingScreenshot = false;
   bool pendingSyncSaveError = false;
-  bool skipNextButtonCheck = false;  // Skip button processing for one frame after subactivity exit
+  bool skipNextButtonCheck = false;
   bool automaticPageTurnActive = false;
-  // Tracks whether this book is currently removed from Recent Books by the
-  // removeReadBooksFromRecents feature (set at End-of-Book, cleared if paged back in).
   bool recentsEntryRemoved = false;
-  // Set when the reader is left at end-of-book and SETTINGS.moveFinishedToReadFolder is on.
-  // Consumed in onExit() to relocate the finished book into /Read/.
   bool pendingReadFolderMove = false;
 
-  // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
   struct SavedPosition {
     int spineIndex;
@@ -60,9 +55,6 @@ class EpubReaderActivity final : public Activity {
     std::unique_ptr<Page> page;  // reused by the consume path's grayscale pass
   };
   PreRenderedPage preRendered;
-  // Set by pageTurn()'s fast path; tells render() the framebuffer already holds the next page's
-  // BW content, so it only adds the status bar, flushes, and runs grayscale.
-  bool useFastDisplay = false;
 
   // Paint one page to the panel: optional prewarm + BW raster, status bar, flush, grayscale pass.
   // contentAlreadyInFb skips the BW raster (the framebuffer already holds it, a consumed
@@ -76,17 +68,28 @@ class EpubReaderActivity final : public Activity {
   void prerenderNextPage(int orientedMarginTop, int orientedMarginLeft);
   // Drop any staged pre-render. Call on every navigation that is not a simple forward turn.
   void invalidatePreRender();
+  // Reset section state for any navigation that changes spine, viewport, or
+  // cache contents. Always invalidates the staged pre-render -- it was layout
+  // for the old (spine, viewport) tuple and is stale by construction. Caller
+  // must hold a RenderLock; both writes are protected by it.
+  void resetSectionForNavigation();
+  // Allocate `section` for currentSpineIndex, draining any in-flight prebuild
+  // for this spine, loading from cache or building (with INDEXING popup), then
+  // resolving the initial currentPage from any of the pending-jump sources
+  // (pageJump / anchor / cached chapter progress / percent jump). On OOM or
+  // build failure, leaves `section` null; caller should bail.
+  void loadSectionForCurrentSpine();
+  // Surface the deferred save-progress error popup (and clear the flag) the
+  // first time render reaches an exit point after the failure. Idempotent.
+  void showPendingSyncSaveError();
   void renderStatusBar() const;
-  void silentIndexNextChapterIfNeeded(uint16_t viewportWidth, uint16_t viewportHeight);
+
   bool saveProgress(int spineIndex, int currentPage, int pageCount);
-  // Jump to a percentage of the book (0-100), mapping it to spine and page.
   void jumpToPercent(int percent);
   void onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action);
   void applyOrientation(uint8_t orientation);
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
   void pageTurn(bool isForwardTurn);
-
-  // Footnote navigation
   void navigateToHref(const std::string& href, bool savePosition = false);
   void restoreSavedPosition();
 

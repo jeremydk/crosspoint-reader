@@ -44,9 +44,12 @@ static void readString(std::istream& is, std::string& s) {
 }
 
 static void readString(FsFile& file, std::string& s) {
-  uint32_t len;
+  uint32_t len = 0;
   readPod(file, len);
+  // Guard against garbage reads (SD card returning wrong data after a long
+  // refresh BUSY-poll). 64 KB is well above any legitimate metadata string.
+  if (len > 65535U) { s.clear(); return; }
   s.resize(len);
-  file.read(&s[0], len);
+  file.read(reinterpret_cast<uint8_t*>(&s[0]), len);
 }
 }  // namespace serialization

@@ -1032,7 +1032,26 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
   }
 }
 
+ChapterHtmlSlimParser::~ChapterHtmlSlimParser() {
+  // If a build was interrupted (caller dropped us mid-step), tear the parser
+  // down so the expat allocation isn't leaked. File handle closes via RAII.
+  if (parser_) {
+    destroyXmlParser(parser_);
+    parser_ = nullptr;
+  }
+}
+
 bool ChapterHtmlSlimParser::parseAndBuildPages() {
+  if (!parseBegin()) return false;
+  while (parseStep(/*maxChunks=*/UINT32_MAX)) {
+    // sync mode: drain to completion in one call (parseStep with no cap)
+  }
+  return parseFinalize();
+}
+
+bool ChapterHtmlSlimParser::parseBegin() {
+  if (parseStarted_) return true;  // idempotent
+
   // Initialize block style stack with a root entry representing "no ancestor block elements".
   // The user's paragraph alignment is set as the default so child elements without explicit
   // text-align inherit it correctly through getCombinedBlockStyle.
@@ -1050,69 +1069,118 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   paragraphAlignmentBlockStyle.alignment = align;
   startNewTextBlock(paragraphAlignmentBlockStyle);
 
-  XML_Parser parser = XML_ParserCreate(nullptr);
-  int done;
-
-  if (!parser) {
+  parser_ = XML_ParserCreate(nullptr);
+  if (!parser_) {
     LOG_ERR("EHP", "Couldn't allocate memory for parser");
+    parseErrored_ = true;
     return false;
   }
 
   // Handle HTML entities (like &nbsp;) that aren't in XML spec or DTD
   // Using DefaultHandlerExpand preserves normal entity expansion from DOCTYPE
-  XML_SetDefaultHandlerExpand(parser, defaultHandlerExpand);
+  XML_SetDefaultHandlerExpand(parser_, defaultHandlerExpand);
 
-  FsFile file;
-  if (!Storage.openFileForRead("EHP", filepath, file)) {
-    destroyXmlParser(parser);
+  // Probe the file size once for the popup threshold (and bail early if the
+  // file is missing); we don't keep the handle open across steps.
+  {
+    FsFile probe;
+    if (!Storage.openFileForRead("EHP", filepath, probe)) {
+      destroyXmlParser(parser_);
+      parser_ = nullptr;
+      parseErrored_ = true;
+      return false;
+    }
+    if (popupFn && probe.size() >= MIN_SIZE_FOR_POPUP) {
+      popupFn();
+    }
+  }
+  parsePos_ = 0;
+
+  XML_SetUserData(parser_, this);
+  XML_SetElementHandler(parser_, startElement, endElement);
+  XML_SetCharacterDataHandler(parser_, characterData);
+
+  parseStarted_ = true;
+  parseDone_ = false;
+  return true;
+}
+
+bool ChapterHtmlSlimParser::parseStep(uint32_t maxChunks) {
+  if (!parseStarted_ || parseDone_ || parseErrored_) return false;
+
+  // Open + seek for this step's reads; close before returning. Keeping the
+  // handle open across steps breaks because SdFat's per-volume sector cache
+  // is shared across all open handles -- another SD read between steps
+  // (font glyph load, image probe, the reader's own page load) rotates the
+  // cache and our next read on the held handle returns bytes from a
+  // different file's clusters. Symptom: 15 pages parse cleanly, then expat
+  // suddenly reports "not well-formed" at line 4 of what it thinks is the
+  // input. See ~/.../investigation log.
+  if (!Storage.openFileForRead("EHP", filepath, parseFile_)) {
+    LOG_ERR("EHP", "Failed to reopen input for step at pos %u", (unsigned)parsePos_);
+    parseErrored_ = true;
+    return false;
+  }
+  if (!parseFile_.seek(parsePos_)) {
+    LOG_ERR("EHP", "Failed to seek input to %u", (unsigned)parsePos_);
+    parseFile_.close();
+    parseErrored_ = true;
     return false;
   }
 
-  // Get file size to decide whether to show indexing popup.
-  if (popupFn && file.size() >= MIN_SIZE_FOR_POPUP) {
-    popupFn();
-  }
-
-  XML_SetUserData(parser, this);
-  XML_SetElementHandler(parser, startElement, endElement);
-  XML_SetCharacterDataHandler(parser, characterData);
-
-  // Compute the time taken to parse and build pages
-  const uint32_t chapterStartTime = millis();
-  do {
-    void* const buf = XML_GetBuffer(parser, PARSE_BUFFER_SIZE);
+  for (uint32_t i = 0; i < maxChunks; ++i) {
+    void* const buf = XML_GetBuffer(parser_, PARSE_BUFFER_SIZE);
     if (!buf) {
       LOG_ERR("EHP", "Couldn't allocate memory for buffer");
-      destroyXmlParser(parser);
-      file.close();
+      parseFile_.close();
+      parseErrored_ = true;
       return false;
     }
 
-    const size_t len = file.read(buf, PARSE_BUFFER_SIZE);
+    const size_t len = parseFile_.read(buf, PARSE_BUFFER_SIZE);
 
-    if (len == 0 && file.available() > 0) {
-      LOG_ERR("EHP", "File read error");
-      destroyXmlParser(parser);
-      file.close();
+    if (len == 0 && parseFile_.available() > 0) {
+      LOG_ERR("EHP", "File read error at pos %u", (unsigned)parsePos_);
+      parseFile_.close();
+      parseErrored_ = true;
+      return false;
+    }
+    parsePos_ += len;
+
+    const int chunkDone = parseFile_.available() == 0 ? 1 : 0;
+
+    if (XML_ParseBuffer(parser_, static_cast<int>(len), chunkDone) == XML_STATUS_ERROR) {
+      LOG_ERR("EHP", "Parse error at line %lu:\n%s", XML_GetCurrentLineNumber(parser_),
+              XML_ErrorString(XML_GetErrorCode(parser_)));
+      parseFile_.close();
+      parseErrored_ = true;
       return false;
     }
 
-    done = file.available() == 0;
-
-    if (XML_ParseBuffer(parser, static_cast<int>(len), done) == XML_STATUS_ERROR) {
-      LOG_ERR("EHP", "Parse error at line %lu:\n%s", XML_GetCurrentLineNumber(parser),
-              XML_ErrorString(XML_GetErrorCode(parser)));
-      destroyXmlParser(parser);
-      file.close();
-      return false;
+    if (chunkDone) {
+      parseDone_ = true;
+      parseFile_.close();
+      return false;  // no more work
     }
-  } while (!done);
-  LOG_DBG("EHP", "Time to parse and build pages: %lu ms", millis() - chapterStartTime);
+  }
 
-  destroyXmlParser(parser);
-  file.close();
+  parseFile_.close();
+  return true;  // budget exhausted, more chunks to come
+}
 
-  // Process last page if there is still text
+bool ChapterHtmlSlimParser::parseFinalize() {
+  if (parser_) {
+    destroyXmlParser(parser_);
+    parser_ = nullptr;
+  }
+  // parseFile_ should already be closed by the last parseStep, but guard for
+  // the (currently impossible) case of finalize being called mid-step.
+  parseFile_.close();
+
+  if (parseErrored_) return false;
+
+  // Process last page if there is still text (only meaningful when parse
+  // completed cleanly; on error the partial currentPage/Block is discarded).
   if (currentTextBlock) {
     makePages();
     if (!pendingAnchorId.empty()) {
