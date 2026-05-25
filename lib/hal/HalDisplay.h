@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include <EInkDisplay.h>
 
+#include <optional>
+
 class HalDisplay {
  public:
   // Constructor with pin configuration
@@ -61,7 +63,12 @@ class HalDisplay {
   uint32_t getBufferSize() const;
 
  private:
-  EInkDisplay einkDisplay;
+  // Lazy storage: panel choice (X3 vs X4) isn't known until begin() can
+  // call gpio.deviceIsX3(), so EInkDisplay can't construct at HalDisplay
+  // construction time. std::optional keeps the 52 KB framebuffer inline
+  // in BSS (matches the prior value-member layout) without forcing a
+  // boot-time heap allocation.
+  std::optional<EInkDisplay> einkDisplay;
 };
 
 extern HalDisplay display;
