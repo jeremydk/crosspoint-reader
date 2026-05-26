@@ -669,6 +669,97 @@ void loop() {
           LOG_INF("HEAP", "check=%s", ok ? "ok" : "corrupt");
         }
         LOG_INF("HEAP", "end");
+      } else if (cmd == "HEAPWALK") {
+        // CMD:HEAPWALK walks every block in the default heap and emits a
+        // size histogram + the top-10 largest used blocks. The walk uses
+        // heap_caps_walk which IS shipped in the arduino-esp32 prebuilt libs
+        // (unlike heap_trace), so this works without an SDK rebuild.
+        //
+        // Output between [HEAPWALK] start and [HEAPWALK] end markers:
+        //   [HEAPWALK] used b8=N b16=N b32=N ... b65536=N
+        //   [HEAPWALK] free b8=N ... (same bucket scheme)
+        //   [HEAPWALK] top_used <sz1> <sz2> ... <sz10>   (descending)
+        //   [HEAPWALK] summary used_count=N used_bytes=B free_count=N
+        //                      free_bytes=B largest_used=B largest_free=B
+        //
+        // Buckets are <= the labeled size, i.e. b32 counts blocks in (16, 32].
+        // The smallest bucket (b8) is (0, 8]. The largest (b65536) is anything
+        // >32768. This is enough resolution to distinguish "many tiny" from
+        // "few large" fragmentation without flooding the log.
+        struct WalkAccum {
+          // enum constants instead of `static constexpr` because local classes
+          // can't have static data members pre-C++17 (and arduino-esp32 sets
+          // -fpermissive which downgrades the diagnostic but still rejects).
+          enum { kBuckets = 14, kTop = 10 };  // buckets: 8, 16, 32, ..., 65536
+          uint32_t used_buckets[kBuckets] = {};
+          uint32_t free_buckets[kBuckets] = {};
+          uint32_t used_count = 0;
+          uint32_t free_count = 0;
+          uint32_t used_bytes = 0;
+          uint32_t free_bytes = 0;
+          uint32_t largest_used = 0;
+          uint32_t largest_free = 0;
+          uint32_t top_used[kTop] = {};
+        };
+        WalkAccum acc;
+        auto walker = [](walker_heap_into_t, walker_block_info_t blk, void* user) -> bool {
+          auto* a = static_cast<WalkAccum*>(user);
+          // Bucket idx = ceil(log2(size)) clamped to [0, kBuckets-1]. Power-of-2
+          // boundary labeled with the upper bound.
+          unsigned idx = 0;
+          uint32_t boundary = 8;
+          while (idx < WalkAccum::kBuckets - 1 && blk.size > boundary) {
+            ++idx;
+            boundary <<= 1;
+          }
+          if (blk.used) {
+            a->used_buckets[idx]++;
+            a->used_count++;
+            a->used_bytes += blk.size;
+            if (blk.size > a->largest_used) a->largest_used = blk.size;
+            // Insert into top_used[] keeping descending order.
+            for (int i = 0; i < WalkAccum::kTop; ++i) {
+              if (blk.size > a->top_used[i]) {
+                for (int j = WalkAccum::kTop - 1; j > i; --j) a->top_used[j] = a->top_used[j - 1];
+                a->top_used[i] = blk.size;
+                break;
+              }
+            }
+          } else {
+            a->free_buckets[idx]++;
+            a->free_count++;
+            a->free_bytes += blk.size;
+            if (blk.size > a->largest_free) a->largest_free = blk.size;
+          }
+          return true;
+        };
+        LOG_INF("HEAPWALK", "start");
+        heap_caps_walk(MALLOC_CAP_DEFAULT, walker, &acc);
+        // Bucket labels mirror the boundary scheme above.
+        static constexpr uint32_t kLabels[] = {8,    16,   32,    64,    128,   256,   512,
+                                               1024, 2048, 4096,  8192,  16384, 32768, 65536};
+        char buf[256];
+        int n = snprintf(buf, sizeof(buf), "used");
+        for (int i = 0; i < WalkAccum::kBuckets && n < (int)sizeof(buf) - 16; ++i) {
+          n += snprintf(buf + n, sizeof(buf) - n, " b%u=%u", (unsigned)kLabels[i], (unsigned)acc.used_buckets[i]);
+        }
+        LOG_INF("HEAPWALK", "%s", buf);
+        n = snprintf(buf, sizeof(buf), "free");
+        for (int i = 0; i < WalkAccum::kBuckets && n < (int)sizeof(buf) - 16; ++i) {
+          n += snprintf(buf + n, sizeof(buf) - n, " b%u=%u", (unsigned)kLabels[i], (unsigned)acc.free_buckets[i]);
+        }
+        LOG_INF("HEAPWALK", "%s", buf);
+        n = snprintf(buf, sizeof(buf), "top_used");
+        for (int i = 0; i < WalkAccum::kTop; ++i) {
+          n += snprintf(buf + n, sizeof(buf) - n, " %u", (unsigned)acc.top_used[i]);
+        }
+        LOG_INF("HEAPWALK", "%s", buf);
+        LOG_INF("HEAPWALK",
+                "summary used_count=%u used_bytes=%u free_count=%u free_bytes=%u "
+                "largest_used=%u largest_free=%u",
+                (unsigned)acc.used_count, (unsigned)acc.used_bytes, (unsigned)acc.free_count,
+                (unsigned)acc.free_bytes, (unsigned)acc.largest_used, (unsigned)acc.largest_free);
+        LOG_INF("HEAPWALK", "end");
       }
 #endif
     }

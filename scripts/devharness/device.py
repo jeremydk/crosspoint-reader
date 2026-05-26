@@ -86,6 +86,25 @@ class HeapSnapshot:
 
 
 @dataclass
+class HeapWalk:
+    """Parsed CMD:HEAPWALK response: full block-level snapshot of the default
+    heap, bucketed by size. The headline question this answers is "what does
+    the heap LOOK like right now" — many tiny holes vs few large holes, where
+    the used bytes are concentrated, what single allocations are the
+    fragmentation drivers."""
+    # Bucket label -> count. Labels are upper bounds: bucket 32 covers (16, 32].
+    used_buckets: dict[int, int]
+    free_buckets: dict[int, int]
+    top_used: list[int]            # 10 largest used block sizes, descending
+    used_count: int
+    used_bytes: int
+    free_count: int
+    free_bytes: int
+    largest_used: int
+    largest_free: int
+
+
+@dataclass
 class HeapLeakReport:
     """Delta across one enter+exit of an activity. alloc_blocks_delta != 0
     after exit means the activity (or a library it pulled in) didn't release
@@ -302,6 +321,23 @@ class Device:
             window = self._slice_since(self._send_cursor)
         return self._parse_heap_dump([text for _, text in window])
 
+    def heap_walk(self, *, timeout: float = 10.0) -> HeapWalk:
+        """Issue CMD:HEAPWALK and parse the block-level distribution.
+
+        Use when CMD:HEAPDUMP's headline numbers (free, largest_free, frag_pct)
+        aren't enough to pick the next intervention: HEAPWALK shows whether
+        the heap is full of tiny allocs (PMR-arena candidate), a few medium
+        ones (Tier-A static .bss candidate), or many small holes from
+        subsystem residue (Tier-D heap-region candidate).
+
+        The walk is O(blocks) on the device but blocks->no allocations during
+        the walk itself (heap is locked). Cheap to call between checkpoints."""
+        self._write("CMD:HEAPWALK\n")
+        self.wait_for(lambda text: "[HEAPWALK] end" in text, timeout=timeout)
+        with self._lock:
+            window = self._slice_since(self._send_cursor)
+        return self._parse_heap_walk([text for _, text in window])
+
     def measure_activity_leak(
         self,
         action,
@@ -405,6 +441,51 @@ class Device:
         summary.regions = regions
         summary.integrity_ok = integrity_ok
         return summary
+
+    _HEAPWALK_BUCKETS_RE = re.compile(r"\[HEAPWALK\]\s+(used|free)\s+(.+)$")
+    _HEAPWALK_BUCKET_PAIR_RE = re.compile(r"b(\d+)=(\d+)")
+    _HEAPWALK_TOP_RE = re.compile(r"\[HEAPWALK\]\s+top_used\s+(.+)$")
+    _HEAPWALK_SUMMARY_RE = re.compile(
+        r"\[HEAPWALK\]\s+summary\s+used_count=(\d+)\s+used_bytes=(\d+)\s+"
+        r"free_count=(\d+)\s+free_bytes=(\d+)\s+largest_used=(\d+)\s+largest_free=(\d+)"
+    )
+
+    def _parse_heap_walk(self, lines: list[str]) -> HeapWalk:
+        used_buckets: dict[int, int] = {}
+        free_buckets: dict[int, int] = {}
+        top_used: list[int] = []
+        summary: tuple[int, int, int, int, int, int] | None = None
+        for text in lines:
+            m = self._HEAPWALK_BUCKETS_RE.search(text)
+            if m:
+                target = used_buckets if m.group(1) == "used" else free_buckets
+                for pm in self._HEAPWALK_BUCKET_PAIR_RE.finditer(m.group(2)):
+                    target[int(pm.group(1))] = int(pm.group(2))
+                continue
+            m = self._HEAPWALK_TOP_RE.search(text)
+            if m:
+                top_used = [int(x) for x in m.group(1).split()]
+                continue
+            m = self._HEAPWALK_SUMMARY_RE.search(text)
+            if m:
+                summary = tuple(int(m.group(i)) for i in range(1, 7))  # type: ignore[assignment]
+                continue
+        if summary is None:
+            raise RuntimeError(
+                "CMD:HEAPWALK response missing summary line; saw:\n  " + "\n  ".join(lines)
+            )
+        used_count, used_bytes, free_count, free_bytes, largest_used, largest_free = summary
+        return HeapWalk(
+            used_buckets=used_buckets,
+            free_buckets=free_buckets,
+            top_used=top_used,
+            used_count=used_count,
+            used_bytes=used_bytes,
+            free_count=free_count,
+            free_bytes=free_bytes,
+            largest_used=largest_used,
+            largest_free=largest_free,
+        )
 
     def go_home(self, timeout: float = 10.0) -> None:
         """Test-harness escape: jump straight to Home regardless of current
