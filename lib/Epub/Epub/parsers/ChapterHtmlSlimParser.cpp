@@ -1157,6 +1157,17 @@ bool ChapterHtmlSlimParser::parseAndBuildPages() {
   blockStyleStack.reserve(8);
   blockStyleStack.push_back(rootBlockStyle);
 
+  // Pre-allocate the parser's growing vectors per CLAUDE.md §"std::vector
+  // Pre-allocation": grow-on-push_back triggers operator new[] internally and
+  // aborts on OOM under -fno-exceptions. Sizes are conservative estimates;
+  // overflow still doubles (rare on a typical chapter).
+  inlineStyleStack.clear();
+  inlineStyleStack.reserve(8);
+  anchorData.clear();
+  anchorData.reserve(64);
+  pendingFootnotes.clear();
+  pendingFootnotes.reserve(16);
+
   auto paragraphAlignmentBlockStyle = BlockStyle();
   paragraphAlignmentBlockStyle.textAlignDefined = true;
   const auto align = rootBlockStyle.alignment;
