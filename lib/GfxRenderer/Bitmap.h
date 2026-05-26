@@ -57,6 +57,7 @@ enum class BmpReaderError : uint8_t {
   SeekPixelDataFailed,
   BufferTooSmall,
   OomRowBuffer,
+  OomDitherer,
   ShortReadRow,
 };
 

@@ -4,13 +4,13 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Utf8.h>
 #include <XmlParserUtils.h>
 #include <expat.h>
 
 #include <algorithm>
 #include <iterator>
-#include <new>
 
 #include "Epub.h"
 #include "Epub/Page.h"
@@ -143,7 +143,12 @@ void ChapterHtmlSlimParser::startNewTextBlock(const BlockStyle& blockStyle) {
     anchorData.push_back({std::move(pendingAnchorId), static_cast<uint16_t>(completedPageCount)});
     pendingAnchorId.clear();
   }
-  currentTextBlock.reset(new ParsedText(extraParagraphSpacing, hyphenationEnabled, focusReadingEnabled, blockStyle));
+  currentTextBlock =
+      makeUniqueNoThrow<ParsedText>(extraParagraphSpacing, hyphenationEnabled, focusReadingEnabled, blockStyle);
+  if (!currentTextBlock) {
+    LOG_ERR("EHP", "OOM: ParsedText (startNewTextBlock)");
+    return;
+  }
   wordsExtractedInBlock = 0;
 }
 
@@ -158,9 +163,9 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
   }
 
   if (!currentPage) {
-    currentPage.reset(new (std::nothrow) Page());
+    currentPage = makeUniqueNoThrow<Page>();
     if (!currentPage) {
-      LOG_ERR("EHP", "Failed to create page for horizontal rule");
+      LOG_ERR("EHP", "OOM: Page (horizontal rule)");
       return;
     }
     currentPageNextY = 0;
@@ -184,9 +189,9 @@ void ChapterHtmlSlimParser::emitHorizontalRule(const BlockStyle& blockStyle) {
   if (!currentPage->elements.empty() && currentPageNextY + totalHeight > viewportHeight) {
     completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex);
     completedPageCount++;
-    currentPage.reset(new (std::nothrow) Page());
+    currentPage = makeUniqueNoThrow<Page>();
     if (!currentPage) {
-      LOG_ERR("EHP", "Failed to create page after horizontal-rule page break");
+      LOG_ERR("EHP", "OOM: Page (post horizontal-rule break)");
       return;
     }
     currentPageNextY = 0;
@@ -524,16 +529,16 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
                   self->completePageFn(std::move(self->currentPage), self->xpathParagraphIndex,
                                        self->xpathListItemIndex);
                   self->completedPageCount++;
-                  self->currentPage.reset(new Page());
+                  self->currentPage = makeUniqueNoThrow<Page>();
                   if (!self->currentPage) {
-                    LOG_ERR("EHP", "Failed to create new page");
+                    LOG_ERR("EHP", "OOM: Page (image, post page-break)");
                     return;
                   }
                   self->currentPageNextY = 0;
                 } else if (!self->currentPage) {
-                  self->currentPage.reset(new Page());
+                  self->currentPage = makeUniqueNoThrow<Page>();
                   if (!self->currentPage) {
-                    LOG_ERR("EHP", "Failed to create initial page");
+                    LOG_ERR("EHP", "OOM: Page (image, initial)");
                     return;
                   }
                   self->currentPageNextY = 0;
@@ -1220,14 +1225,22 @@ void ChapterHtmlSlimParser::addLineToPage(std::shared_ptr<TextBlock> line) {
   const int lineHeight = renderer.getLineHeight(fontId) * lineCompression;
 
   if (!currentPage) {
-    currentPage.reset(new Page());
+    currentPage = makeUniqueNoThrow<Page>();
+    if (!currentPage) {
+      LOG_ERR("EHP", "OOM: Page (addLineToPage, initial)");
+      return;
+    }
     currentPageNextY = 0;
   }
 
   if (currentPageNextY + lineHeight > viewportHeight) {
     completePageFn(std::move(currentPage), xpathParagraphIndex, xpathListItemIndex);
     completedPageCount++;
-    currentPage.reset(new Page());
+    currentPage = makeUniqueNoThrow<Page>();
+    if (!currentPage) {
+      LOG_ERR("EHP", "OOM: Page (addLineToPage, post-break)");
+      return;
+    }
     currentPageNextY = 0;
   }
 
@@ -1253,7 +1266,11 @@ void ChapterHtmlSlimParser::makePages() {
   }
 
   if (!currentPage) {
-    currentPage.reset(new Page());
+    currentPage = makeUniqueNoThrow<Page>();
+    if (!currentPage) {
+      LOG_ERR("EHP", "OOM: Page (makePages)");
+      return;
+    }
     currentPageNextY = 0;
   }
 

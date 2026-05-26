@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Serialization.h>
 
 #include <cstring>
@@ -160,7 +161,11 @@ std::unique_ptr<TextBlock> TextBlock::deserialize(HalFile& file) {
   serialization::readPod(file, blockStyle.textIndent);
   serialization::readPod(file, blockStyle.textIndentDefined);
 
-  return std::unique_ptr<TextBlock>(new TextBlock(std::move(words), std::move(wordXpos), std::move(wordStyles),
-                                                  std::move(wordFocusBoundary), std::move(wordFocusSuffixX),
-                                                  blockStyle));
+  auto tb = makeUniqueNoThrow<TextBlock>(std::move(words), std::move(wordXpos), std::move(wordStyles),
+                                          std::move(wordFocusBoundary), std::move(wordFocusSuffixX), blockStyle);
+  if (!tb) {
+    LOG_ERR("TXB", "OOM: TextBlock");
+    return nullptr;
+  }
+  return tb;
 }

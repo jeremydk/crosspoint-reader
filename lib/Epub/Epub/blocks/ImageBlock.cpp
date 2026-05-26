@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <Serialization.h>
 
 #include "Epub/converters/DirectPixelWriter.h"
@@ -168,5 +169,10 @@ std::unique_ptr<ImageBlock> ImageBlock::deserialize(HalFile& file) {
   int16_t w, h;
   serialization::readPod(file, w);
   serialization::readPod(file, h);
-  return std::unique_ptr<ImageBlock>(new ImageBlock(path, w, h));
+  auto ib = makeUniqueNoThrow<ImageBlock>(path, w, h);
+  if (!ib) {
+    LOG_ERR("IMG", "OOM: ImageBlock");
+    return nullptr;
+  }
+  return ib;
 }
