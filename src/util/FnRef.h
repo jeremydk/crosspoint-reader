@@ -36,8 +36,7 @@ class FnRef<R(Args...)> {
 
   template <typename F, typename = std::enable_if_t<!std::is_same_v<std::decay_t<F>, FnRef>>>
   FnRef(F&& f) noexcept
-      : thunk_(&invoke<std::remove_reference_t<F>>),
-        ctx_(const_cast<void*>(static_cast<const void*>(&f))) {}
+      : thunk_(&invoke<std::remove_reference_t<F>>), ctx_(const_cast<void*>(static_cast<const void*>(&f))) {}
 
   explicit operator bool() const noexcept { return thunk_ != nullptr; }
 
