@@ -32,9 +32,13 @@ template <typename R, typename... Args>
 class FnRef<R(Args...)> {
  public:
   FnRef() = default;
+  // Implicit conversions are intentional: lambdas and nullptr bind through
+  // this directly at call sites without forcing the caller to wrap them.
+  // cppcheck-suppress noExplicitConstructor
   FnRef(std::nullptr_t) noexcept {}
 
   template <typename F, typename = std::enable_if_t<!std::is_same_v<std::decay_t<F>, FnRef>>>
+  // cppcheck-suppress noExplicitConstructor
   FnRef(F&& f) noexcept
       : thunk_(&invoke<std::remove_reference_t<F>>), ctx_(const_cast<void*>(static_cast<const void*>(&f))) {}
 
