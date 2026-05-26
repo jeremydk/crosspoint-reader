@@ -207,7 +207,7 @@ class FloydSteinbergDitherer {
   explicit FloydSteinbergDitherer(int width)
       : width(width),
         rowCount(0),
-        errorCurRow(std::unique_ptr<int16_t[]>(new (std::nothrow) int16_t[width + 2]())),     // +2 for boundary handling
+        errorCurRow(std::unique_ptr<int16_t[]>(new (std::nothrow) int16_t[width + 2]())),  // +2 for boundary handling
         errorNextRow(std::unique_ptr<int16_t[]>(new (std::nothrow) int16_t[width + 2]())) {}
 
   ~FloydSteinbergDitherer() = default;
