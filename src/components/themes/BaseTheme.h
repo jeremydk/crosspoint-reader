@@ -2,9 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <string>
 #include <vector>
+
+#include "util/FnRef.h"
 
 class GfxRenderer;
 struct RecentBook;
@@ -183,11 +184,9 @@ class BaseTheme {
                                const char* btn4) const;
   virtual void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const;
   virtual void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
-                        const std::function<std::string(int index)>& rowTitle,
-                        const std::function<std::string(int index)>& rowSubtitle = nullptr,
-                        const std::function<UIIcon(int index)>& rowIcon = nullptr,
-                        const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
-                        const std::function<bool(int index)>& rowDimmed = nullptr) const;
+                        FnRef<std::string(int index)> rowTitle, FnRef<std::string(int index)> rowSubtitle = nullptr,
+                        FnRef<UIIcon(int index)> rowIcon = nullptr, FnRef<std::string(int index)> rowValue = nullptr,
+                        bool highlightValue = false, FnRef<bool(int index)> rowDimmed = nullptr) const;
   virtual void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title,
                           const char* subtitle = nullptr) const;
   virtual void drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label,
@@ -196,10 +195,9 @@ class BaseTheme {
                           bool selected) const;
   virtual void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                    const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                   bool& bufferRestored, std::function<bool()> storeCoverBuffer) const;
+                                   bool& bufferRestored, FnRef<bool()> storeCoverBuffer) const;
   virtual void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
-                              const std::function<std::string(int index)>& buttonLabel,
-                              const std::function<UIIcon(int index)>& rowIcon) const;
+                              FnRef<std::string(int index)> buttonLabel, FnRef<UIIcon(int index)> rowIcon) const;
   virtual Rect drawPopup(const GfxRenderer& renderer, const char* message) const;
   virtual void fillPopupProgress(const GfxRenderer& renderer, const Rect& layout, const int progress) const;
   void drawStatusBar(GfxRenderer& renderer, const float bookProgress, const int currentPage, const int pageCount,

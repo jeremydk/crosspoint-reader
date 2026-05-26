@@ -77,21 +77,18 @@ class RoundedRaffTheme : public BaseTheme {
                   bool selected) const override;
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
-                           std::function<bool()> storeCoverBuffer) const override;
+                           FnRef<bool()> storeCoverBuffer) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
-                      const std::function<std::string(int index)>& buttonLabel,
-                      const std::function<UIIcon(int index)>& rowIcon) const override;
+                      FnRef<std::string(int index)> buttonLabel, FnRef<UIIcon(int index)> rowIcon) const override;
   void drawTextField(const GfxRenderer& renderer, Rect rect, int textWidth, bool cursorMode = false,
                      int contentStartX = 0, int contentWidth = 0) const override;
   void drawKeyboardKey(const GfxRenderer& renderer, Rect rect, const char* label, bool isSelected,
                        const char* secondaryLabel = nullptr, KeyboardKeyType keyType = KeyboardKeyType::Normal,
                        bool inactiveSelection = false) const override;
   void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
-                const std::function<std::string(int index)>& rowTitle,
-                const std::function<std::string(int index)>& rowSubtitle = nullptr,
-                const std::function<UIIcon(int index)>& rowIcon = nullptr,
-                const std::function<std::string(int index)>& rowValue = nullptr, bool highlightValue = false,
-                const std::function<bool(int index)>& rowDimmed = nullptr) const override;
+                FnRef<std::string(int index)> rowTitle, FnRef<std::string(int index)> rowSubtitle = nullptr,
+                FnRef<UIIcon(int index)> rowIcon = nullptr, FnRef<std::string(int index)> rowValue = nullptr,
+                bool highlightValue = false, FnRef<bool(int index)> rowDimmed = nullptr) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                        const char* btn4) const override;
   bool homeMenuShowsContinueReading() const { return true; }

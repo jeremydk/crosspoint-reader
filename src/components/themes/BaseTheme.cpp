@@ -173,7 +173,7 @@ void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
     // X3 layout: Up on left side, Down on right side, positioned higher
     constexpr int x3ButtonY = 155;
 
-    if (topBtn != nullptr && topBtn[0] != '\0') {
+    if (topBtn && topBtn[0] != '\0') {
       const int leftX = buttonMargin;
       renderer.drawRect(leftX, x3ButtonY, buttonWidth, buttonHeight);
       const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, topBtn);
@@ -183,7 +183,7 @@ void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
       renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, topBtn);
     }
 
-    if (bottomBtn != nullptr && bottomBtn[0] != '\0') {
+    if (bottomBtn && bottomBtn[0] != '\0') {
       const int rightX = screenWidth - buttonMargin - buttonWidth;
       renderer.drawRect(rightX, x3ButtonY, buttonWidth, buttonHeight);
       const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtn);
@@ -198,17 +198,17 @@ void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
     const char* labels[] = {topBtn, bottomBtn};
     const int x = screenWidth - buttonMargin - buttonWidth;
 
-    if (topBtn != nullptr && topBtn[0] != '\0') {
+    if (topBtn && topBtn[0] != '\0') {
       renderer.drawLine(x, topButtonY, x + buttonWidth - 1, topButtonY);
       renderer.drawLine(x, topButtonY, x, topButtonY + buttonHeight - 1);
       renderer.drawLine(x + buttonWidth - 1, topButtonY, x + buttonWidth - 1, topButtonY + buttonHeight - 1);
     }
 
-    if ((topBtn != nullptr && topBtn[0] != '\0') || (bottomBtn != nullptr && bottomBtn[0] != '\0')) {
+    if ((topBtn && topBtn[0] != '\0') || (bottomBtn && bottomBtn[0] != '\0')) {
       renderer.drawLine(x, topButtonY + buttonHeight, x + buttonWidth - 1, topButtonY + buttonHeight);
     }
 
-    if (bottomBtn != nullptr && bottomBtn[0] != '\0') {
+    if (bottomBtn && bottomBtn[0] != '\0') {
       renderer.drawLine(x, topButtonY + buttonHeight, x, topButtonY + 2 * buttonHeight - 1);
       renderer.drawLine(x + buttonWidth - 1, topButtonY + buttonHeight, x + buttonWidth - 1,
                         topButtonY + 2 * buttonHeight - 1);
@@ -229,13 +229,10 @@ void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
 }
 
 void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
-                         const std::function<std::string(int index)>& rowTitle,
-                         const std::function<std::string(int index)>& rowSubtitle,
-                         const std::function<UIIcon(int index)>& rowIcon,
-                         const std::function<std::string(int index)>& rowValue, bool highlightValue,
-                         const std::function<bool(int index)>& rowDimmed) const {
-  int rowHeight =
-      (rowSubtitle != nullptr) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
+                         FnRef<std::string(int index)> rowTitle, FnRef<std::string(int index)> rowSubtitle,
+                         FnRef<UIIcon(int index)> rowIcon, FnRef<std::string(int index)> rowValue, bool highlightValue,
+                         FnRef<bool(int index)> rowDimmed) const {
+  int rowHeight = (rowSubtitle) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
   int pageItems = rect.height / rowHeight;
 
   const int totalPages = (itemCount + pageItems - 1) / pageItems;
@@ -278,7 +275,7 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
 
     int rowTextWidth = contentWidth - BaseMetrics::values.contentSidePadding * 2;
     std::string valueText;
-    if (rowValue != nullptr) {
+    if (rowValue) {
       valueText = rowValue(i);
       if (!valueText.empty()) {
         int maxValW = std::max(0, rowTextWidth - 40 - minValueGap);
@@ -303,7 +300,7 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
           if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
     }
 
-    if (rowSubtitle != nullptr) {
+    if (rowSubtitle) {
       std::string subtitleText = rowSubtitle(i);
       if (!subtitleText.empty()) {
         auto subtitle = renderer.truncatedText(SMALL_FONT_ID, subtitleText.c_str(), rowTextWidth);
@@ -315,7 +312,7 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     if (!valueText.empty()) {
       const auto valueTextWidth = renderer.getTextWidth(UI_10_FONT_ID, valueText.c_str());
       int valueY = itemY;
-      if (rowSubtitle != nullptr) {
+      if (rowSubtitle) {
         valueY = itemY + 10;
       }
       renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - BaseMetrics::values.contentSidePadding - valueTextWidth,
@@ -409,7 +406,7 @@ void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const s
 // TODO: Refactor method to make it cleaner, split into smaller methods
 void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                     const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                    bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {
+                                    bool& bufferRestored, FnRef<bool()> storeCoverBuffer) const {
   const bool hasContinueReading = !recentBooks.empty();
   const bool bookSelected = hasContinueReading && selectorIndex == 0;
 
@@ -636,8 +633,7 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 }
 
 void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
-                               const std::function<std::string(int index)>& buttonLabel,
-                               const std::function<UIIcon(int index)>& rowIcon) const {
+                               FnRef<std::string(int index)> buttonLabel, FnRef<UIIcon(int index)> rowIcon) const {
   for (int i = 0; i < buttonCount; ++i) {
     const int tileY = BaseMetrics::values.verticalSpacing + rect.y +
                       static_cast<int>(i) * (BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing);
@@ -935,11 +931,11 @@ void BaseTheme::drawKeyboardKey(const GfxRenderer& renderer, Rect rect, const ch
     return;
   }
 
-  if (label == nullptr || label[0] == '\0') {
+  if (!label || label[0] == '\0') {
     return;
   }
 
-  const bool hasSecondary = secondaryLabel != nullptr && secondaryLabel[0] != '\0';
+  const bool hasSecondary = secondaryLabel && secondaryLabel[0] != '\0';
   const int itemWidth = renderer.getTextWidth(UI_12_FONT_ID, label);
   const int textX = rect.x + (rect.width - itemWidth) / 2;
   const int textY = rect.y + (rect.height - renderer.getLineHeight(UI_12_FONT_ID)) / 2;

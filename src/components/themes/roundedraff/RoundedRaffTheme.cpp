@@ -50,7 +50,7 @@ void RoundedRaffTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const 
                                   const char* subtitle) const {
   (void)subtitle;
   // Home screen header is custom-rendered in drawRecentBookCover.
-  if (title == nullptr) {
+  if (!title) {
     return;
   }
   const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
@@ -114,7 +114,7 @@ void RoundedRaffTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const 
 
 void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                                            const int selectorIndex, bool& coverRendered, bool& coverBufferStored,
-                                           bool& bufferRestored, std::function<bool()> storeCoverBuffer) const {
+                                           bool& bufferRestored, FnRef<bool()> storeCoverBuffer) const {
   const int tileWidth = rect.width - 2 * RoundedRaffMetrics::values.contentSidePadding;
   const int tileHeight = rect.height;
   const int tileY = rect.y;
@@ -192,8 +192,8 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
 }
 
 void RoundedRaffTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
-                                      const std::function<std::string(int index)>& buttonLabel,
-                                      const std::function<UIIcon(int index)>& rowIcon) const {
+                                      FnRef<std::string(int index)> buttonLabel,
+                                      FnRef<UIIcon(int index)> rowIcon) const {
   (void)rowIcon;
   const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
   const int rowX = rect.x + sidePadding;
@@ -288,25 +288,23 @@ void RoundedRaffTheme::drawKeyboardKey(const GfxRenderer& renderer, Rect rect, c
     return;
   }
 
-  if (label != nullptr && label[0] != '\0') {
+  if (label && label[0] != '\0') {
     const int itemWidth = renderer.getTextWidth(UI_12_FONT_ID, label);
     const int textX = rect.x + (rect.width - itemWidth) / 2;
     const int textY = rect.y + (rect.height - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
     renderer.drawText(UI_12_FONT_ID, textX, textY, label, !invert);
   }
 
-  if (secondaryLabel != nullptr && secondaryLabel[0] != '\0') {
+  if (secondaryLabel && secondaryLabel[0] != '\0') {
     const int secWidth = renderer.getTextWidth(SMALL_FONT_ID, secondaryLabel);
     renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - secWidth - 3, rect.y + 1, secondaryLabel, !invert);
   }
 }
 
 void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
-                                const std::function<std::string(int index)>& rowTitle,
-                                const std::function<std::string(int index)>& rowSubtitle,
-                                const std::function<UIIcon(int index)>& rowIcon,
-                                const std::function<std::string(int index)>& rowValue, bool highlightValue,
-                                const std::function<bool(int index)>& rowDimmed) const {
+                                FnRef<std::string(int index)> rowTitle, FnRef<std::string(int index)> rowSubtitle,
+                                FnRef<UIIcon(int index)> rowIcon, FnRef<std::string(int index)> rowValue,
+                                bool highlightValue, FnRef<bool(int index)> rowDimmed) const {
   (void)rowIcon;
   (void)highlightValue;
   (void)rowDimmed;
@@ -396,7 +394,7 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
   const int hintY = pageHeight - hintHeight - bottomMargin;
   const int textY = hintY + (hintHeight - renderer.getLineHeight(kGuideFontId)) / 2;
 
-  const bool backDisabled = (btn1 == nullptr || btn1[0] == '\0');
+  const bool backDisabled = (!btn1 || btn1[0] == '\0');
   const int leftGroupX = sidePadding;
   const int rightGroupX = leftGroupX + groupWidth + groupGap;
   const std::string backLabel = backDisabled ? "" : std::string(btn1);
